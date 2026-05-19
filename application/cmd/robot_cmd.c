@@ -91,7 +91,7 @@ void RobotCMDInit()
     //     },
     // };
     //bmi088_test = BMI088Register(&bmi088_config);
-   rc_data = RemoteControlInit(&huart3);   // 修改为对应串口,注意如果是自研板dbus协议串口需选用添加了反相器的那个
+    rc_data = RemoteControlInit(&huart3);   // 修改为对应串口,注意如果是自研板dbus协议串口需选用添加了反相器的那个
     vision_recv_data = VisionInit(&huart1); // 视觉通信串口
 
     gimbal_cmd_pub = PubRegister("gimbal_cmd", sizeof(Gimbal_Ctrl_Cmd_s));
@@ -168,8 +168,13 @@ static void RemoteControlSet()
     // 云台参数,确定云台控制数据
     if (switch_is_mid(rc_data[TEMP].rc.switch_left)) // 左侧开关状态为[中],视觉模式
     {
-        // 待添加,视觉会发来和目标的误差,同样将其转化为total angle的增量进行控制
-        // ...
+        if (vision_recv_data->target_state != NO_TARGET)
+        {
+            // 以当前实际位置为基础叠加视觉误差，避免每帧累加导致发散
+            gimbal_cmd_send.yaw   = gimbal_fetch_data.gimbal_imu_data.YawTotalAngle + vision_recv_data->yaw;
+            gimbal_cmd_send.pitch = -gimbal_fetch_data.gimbal_imu_data.Pitch        + vision_recv_data->pitch;
+        }
+        // 无目标时保持当前角度不动
     }
     // 左侧开关状态为[下],或视觉未识别到目标,纯遥控器拨杆控制
     if (switch_is_down(rc_data[TEMP].rc.switch_left) || vision_recv_data->target_state == NO_TARGET)
@@ -342,6 +347,12 @@ void RobotCMDTask()
 
     // 设置视觉发送数据,还需增加加速度和角速度数据
     // VisionSetFlag(chassis_fetch_data.enemy_color,,chassis_fetch_data.bullet_speed)
+
+    // 发送当前云台姿态给上位机用于弹道解算
+    VisionSetAltitude(gimbal_fetch_data.gimbal_imu_data.YawTotalAngle,
+                      gimbal_fetch_data.gimbal_imu_data.Pitch,
+                      gimbal_fetch_data.gimbal_imu_data.Roll);
+    VisionSend();
 
     // 推送消息,双板通信,视觉通信等
     // 其他应用所需的控制数据在remotecontrolsetmode和mousekeysetmode中完成设置
