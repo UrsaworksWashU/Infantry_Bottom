@@ -63,7 +63,9 @@ static void DecodeVision()
     uint16_t flag_register;
     DaemonReload(vision_daemon_instance); // 喂狗
     get_protocol_info(vision_usart_instance->recv_buff, &flag_register, (uint8_t *)&recv_data.pitch);
-    // TODO: code to resolve flag_register;
+    recv_data.fire_mode    = (Fire_Mode_e)(flag_register & 0x03);
+    recv_data.target_state = (Target_State_e)((flag_register >> 2) & 0x03);
+    recv_data.target_type  = (Target_Type_e)((flag_register >> 8) & 0xFF);
 }
 
 Vision_Recv_s *VisionInit(UART_HandleTypeDef *_handle)
@@ -119,7 +121,9 @@ static void DecodeVision(uint16_t recv_len)
 {
     uint16_t flag_register;
     get_protocol_info(vis_recv_buff, &flag_register, (uint8_t *)&recv_data.pitch);
-    // TODO: code to resolve flag_register;
+    recv_data.fire_mode    = (Fire_Mode_e)(flag_register & 0x03);
+    recv_data.target_state = (Target_State_e)((flag_register >> 2) & 0x03);
+    recv_data.target_type  = (Target_Type_e)((flag_register >> 8) & 0xFF);
 }
 
 /* 视觉通信初始化 */
