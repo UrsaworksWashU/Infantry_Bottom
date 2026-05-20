@@ -165,23 +165,9 @@ static void RemoteControlSet()
         gimbal_cmd_send.gimbal_mode = GIMBAL_FREE_MODE;
     }
 
-    // 云台参数,确定云台控制数据
-    if (switch_is_mid(rc_data[TEMP].rc.switch_left)) // 左侧开关状态为[中],视觉模式
-    {
-        if (vision_recv_data->target_state != NO_TARGET)
-        {
-            // 以当前实际位置为基础叠加视觉误差，避免每帧累加导致发散
-            gimbal_cmd_send.yaw   = gimbal_fetch_data.gimbal_imu_data.YawTotalAngle + vision_recv_data->yaw;
-            gimbal_cmd_send.pitch = -gimbal_fetch_data.gimbal_imu_data.Pitch        + vision_recv_data->pitch;
-        }
-        // 无目标时保持当前角度不动
-    }
-    // 左侧开关状态为[下],或视觉未识别到目标,纯遥控器拨杆控制
-    if (switch_is_down(rc_data[TEMP].rc.switch_left) || vision_recv_data->target_state == NO_TARGET)
-    { // 按照摇杆的输出大小进行角度增量,增益系数需调整
-        gimbal_cmd_send.yaw += 0.005f * (float)rc_data[TEMP].rc.rocker_l_;
-        gimbal_cmd_send.pitch += 0.001f * (float)rc_data[TEMP].rc.rocker_l1;
-    }
+    // 云台参数,左侧开关[下]时摇杆控制
+    gimbal_cmd_send.yaw   += -0.005f * (float)rc_data[TEMP].rc.rocker_l_; // horizontal controller stick negative left, positive right
+    gimbal_cmd_send.pitch +=  0.001f * (float)rc_data[TEMP].rc.rocker_l1;
     // 云台软件限位
 
     // 底盘参数,目前没有加入小陀螺(调试似乎暂时没有必要),系数需要调整
@@ -206,6 +192,21 @@ static void RemoteControlSet()
         shoot_cmd_send.load_mode = LOAD_STOP;
     // 射频控制,固定每秒1发,后续可以根据左侧拨轮的值大小切换射频,
     shoot_cmd_send.shoot_rate = 8;
+}
+
+/**
+ * @brief 控制输入为视觉上位机时的模式和控制量设置
+ *
+ */
+static void VisionControlSet()
+{
+    gimbal_cmd_send.gimbal_mode = GIMBAL_GYRO_MODE;
+    if (vision_recv_data->target_state != NO_TARGET)
+    {
+        gimbal_cmd_send.yaw   = gimbal_fetch_data.gimbal_imu_data.YawTotalAngle + vision_recv_data->yaw;
+        gimbal_cmd_send.pitch = -gimbal_fetch_data.gimbal_imu_data.Pitch        + vision_recv_data->pitch;
+    }
+    // 无目标时保持当前角度不动
 }
 
 /**
@@ -340,6 +341,8 @@ void RobotCMDTask()
     // 根据遥控器左侧开关,确定当前使用的控制模式为遥控器调试还是键鼠
     if (switch_is_down(rc_data[TEMP].rc.switch_left)) // 遥控器左侧开关状态为[下],遥控器控制
         RemoteControlSet();
+    else if (switch_is_mid(rc_data[TEMP].rc.switch_left)) // 遥控器左侧开关状态为[中],视觉模式
+        VisionControlSet();
     else if (switch_is_up(rc_data[TEMP].rc.switch_left)) // 遥控器左侧开关状态为[上],键盘控制
         MouseKeySet();
 
