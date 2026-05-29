@@ -162,7 +162,7 @@ static void RemoteControlSet()
     else if (switch_is_mid(rc_data[TEMP].rc.switch_right)) // 右侧开关状态[中],底盘和云台分离,底盘保持不转动
     {
         chassis_cmd_send.chassis_mode = CHASSIS_NO_FOLLOW;
-        gimbal_cmd_send.gimbal_mode = GIMBAL_FREE_MODE;
+        gimbal_cmd_send.gimbal_mode = GIMBAL_GYRO_MODE;
     }
 
     // 云台参数,左侧开关[下]时摇杆控制

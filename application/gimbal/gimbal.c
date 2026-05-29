@@ -8,8 +8,8 @@
 
 static attitude_t *gimbal_IMU_data; // 云台IMU数据
 static DJIMotorInstance *yaw_motor, *pitch_motor;
-static float pitch_neg;  // IMU pitch取反，用于方向修正
-static float gyro0_neg;  // IMU Gyro[0]取反，用于方向修正
+// static float pitch_neg;  // IMU pitch取反，用于方向修正
+// static float gyro0_neg;  // IMU Gyro[0]取反，用于方向修正
 
 static Publisher_t *gimbal_pub;                   // 云台应用消息发布者(云台反馈给cmd)
 static Subscriber_t *gimbal_sub;                  // cmd控制消息订阅者
@@ -80,16 +80,16 @@ void GimbalInit()
                 .IntegralLimit = 2500,
                 .MaxOut = 20000,
             },
-            .other_angle_feedback_ptr = &pitch_neg,
+            .other_angle_feedback_ptr = &gimbal_IMU_data->Pitch,
             // 还需要增加角速度额外反馈指针,注意方向,ins_task.md中有c板的bodyframe坐标系说明
-            .other_speed_feedback_ptr = &gyro0_neg,
+            .other_speed_feedback_ptr = &gimbal_IMU_data->Gyro[0],
         },
         .controller_setting_init_config = {
             .angle_feedback_source = OTHER_FEED,
             .speed_feedback_source = OTHER_FEED,
             .outer_loop_type = ANGLE_LOOP,
             .close_loop_type = SPEED_LOOP | ANGLE_LOOP,
-            .motor_reverse_flag = MOTOR_DIRECTION_REVERSE,
+            .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
         },
         .motor_type = GM6020,
     };
@@ -107,8 +107,9 @@ void GimbalTask()
     // 获取云台控制数据
     // 后续增加未收到数据的处理
     SubGetMessage(gimbal_sub, &gimbal_cmd_recv);
-    pitch_neg  = -gimbal_IMU_data->Pitch;
-    gyro0_neg  = -gimbal_IMU_data->Gyro[0];
+    // TODO: add code for reversed imu direction for future
+    // pitch_neg  = -gimbal_IMU_data->Pitch;
+    // gyro0_neg  = -gimbal_IMU_data->Gyro[0];
 
     // @todo:现在已不再需要电机反馈,实际上可以始终使用IMU的姿态数据来作为云台的反馈,yaw电机的offset只是用来跟随底盘
     // 根据控制模式进行电机反馈切换和过渡,视觉模式在robot_cmd模块就已经设置好,gimbal只看yaw_ref和pitch_ref
