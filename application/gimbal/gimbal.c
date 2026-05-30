@@ -5,6 +5,8 @@
 #include "message_center.h"
 #include "general_def.h"
 #include "bmi088.h"
+#include "bsp_dwt.h"
+#include <math.h>
 
 static attitude_t *gimbal_IMU_data; // 云台IMU数据
 static DJIMotorInstance *yaw_motor, *pitch_motor;
@@ -15,6 +17,22 @@ static Publisher_t *gimbal_pub;                   // 云台应用消息发布者
 static Subscriber_t *gimbal_sub;                  // cmd控制消息订阅者
 static Gimbal_Upload_Data_s gimbal_feedback_data; // 回传给cmd的云台状态信息
 static Gimbal_Ctrl_Cmd_s gimbal_cmd_recv;         // 来自cmd的控制信息
+
+// // volatile variables for tuning and debugging in Ozone Timeline
+// volatile float dbg_yaw_speed_ref;     
+// volatile float dbg_yaw_speed_measure; 
+// volatile float dbg_yaw_angle_ref;     
+// volatile float dbg_yaw_angle_measure; 
+
+// Gyro[]单位是rad/s，速度PID期望deg/s，乘(180/π)转换后作为speed反馈指针
+static float yaw_gyro_dps;   // = Gyro[2] * RAD2DEG，200Hz更新
+static float pitch_gyro_dps; // = Gyro[0] * RAD2DEG，200Hz更新
+#define RAD2DEG 57.29577951f
+
+// 速度环调参模式：Ozone Watches里将 yaw_speed_tuning 设为 1 进入，0 恢复正常
+volatile uint8_t yaw_speed_tuning = 0;
+volatile float yaw_tune_amp  = 600.0f; // deg/s 正弦幅值，Ozone可实时修改
+volatile float yaw_tune_freq = 0.5f;   // Hz，Ozone可实时修改
 
 // static BMI088Instance *bmi088; // 云台IMU
 void GimbalInit()
@@ -28,7 +46,7 @@ void GimbalInit()
         },
         .controller_param_init_config = {
             .angle_PID = {
-                .Kp = 8, // 8
+                .Kp = 8, 
                 .Ki = 0,
                 .Kd = 0,
                 .DeadBand = 0.1,
@@ -38,16 +56,16 @@ void GimbalInit()
                 .MaxOut = 500,
             },
             .speed_PID = {
-                .Kp = 50,  // 50
-                .Ki = 200, // 200
+                .Kp = 220,  
+                .Ki = 500, 
                 .Kd = 0,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
                 .IntegralLimit = 3000,
                 .MaxOut = 20000,
             },
             .other_angle_feedback_ptr = &gimbal_IMU_data->YawTotalAngle,
-            // 还需要增加角速度额外反馈指针,注意方向,ins_task.md中有c板的bodyframe坐标系说明
-            .other_speed_feedback_ptr = &gimbal_IMU_data->Gyro[2],
+            // Gyro[2]是rad/s，speed PID需要deg/s，所以指向转换后的yaw_gyro_dps
+            .other_speed_feedback_ptr = &yaw_gyro_dps,
         },
         .controller_setting_init_config = {
             .angle_feedback_source = OTHER_FEED,
@@ -65,7 +83,7 @@ void GimbalInit()
         },
         .controller_param_init_config = {
             .angle_PID = {
-                .Kp = 10, // 10
+                .Kp = 0, // 10
                 .Ki = 0,
                 .Kd = 0,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
@@ -81,8 +99,8 @@ void GimbalInit()
                 .MaxOut = 20000,
             },
             .other_angle_feedback_ptr = &gimbal_IMU_data->Pitch,
-            // 还需要增加角速度额外反馈指针,注意方向,ins_task.md中有c板的bodyframe坐标系说明
-            .other_speed_feedback_ptr = &gimbal_IMU_data->Gyro[0],
+            // Gyro[0]是rad/s，speed PID需要deg/s，所以指向转换后的pitch_gyro_dps
+            .other_speed_feedback_ptr = &pitch_gyro_dps,
         },
         .controller_setting_init_config = {
             .angle_feedback_source = OTHER_FEED,
@@ -104,6 +122,10 @@ void GimbalInit()
 /* 机器人云台控制核心任务,后续考虑只保留IMU控制,不再需要电机的反馈 */
 void GimbalTask()
 {
+    // Gyro[]是rad/s，在此转换为deg/s供速度环使用
+    yaw_gyro_dps   = gimbal_IMU_data->Gyro[2] * RAD2DEG;
+    pitch_gyro_dps = gimbal_IMU_data->Gyro[0] * RAD2DEG;
+
     // 获取云台控制数据
     // 后续增加未收到数据的处理
     SubGetMessage(gimbal_sub, &gimbal_cmd_recv);
@@ -111,39 +133,57 @@ void GimbalTask()
     // pitch_neg  = -gimbal_IMU_data->Pitch;
     // gyro0_neg  = -gimbal_IMU_data->Gyro[0];
 
-    // @todo:现在已不再需要电机反馈,实际上可以始终使用IMU的姿态数据来作为云台的反馈,yaw电机的offset只是用来跟随底盘
-    // 根据控制模式进行电机反馈切换和过渡,视觉模式在robot_cmd模块就已经设置好,gimbal只看yaw_ref和pitch_ref
-    switch (gimbal_cmd_recv.gimbal_mode)
+    if (yaw_speed_tuning)
     {
-    // 停止
-    case GIMBAL_ZERO_FORCE:
-        DJIMotorStop(yaw_motor);
-        DJIMotorStop(pitch_motor);
-        break;
-    // 使用陀螺仪的反馈,底盘根据yaw电机的offset跟随云台或视觉模式采用
-    case GIMBAL_GYRO_MODE: // 后续只保留此模式
+        // 速度环调参模式：正弦波输入，绕过正常角度控制
+        // GM6020最大速度320RPM=1920deg/s，幅值200deg/s约占10%，安全
+        DJIMotorOuterLoop(yaw_motor, SPEED_LOOP);
         DJIMotorEnable(yaw_motor);
-        DJIMotorEnable(pitch_motor);
-        DJIMotorChangeFeed(yaw_motor, ANGLE_LOOP, OTHER_FEED);
-        DJIMotorChangeFeed(yaw_motor, SPEED_LOOP, OTHER_FEED);
-        DJIMotorChangeFeed(pitch_motor, ANGLE_LOOP, OTHER_FEED);
-        DJIMotorChangeFeed(pitch_motor, SPEED_LOOP, OTHER_FEED);
-        DJIMotorSetRef(yaw_motor, gimbal_cmd_recv.yaw); // yaw和pitch会在robot_cmd中处理好多圈和单圈
-        DJIMotorSetRef(pitch_motor, gimbal_cmd_recv.pitch);
-        break;
-    // 云台自由模式,使用编码器反馈,底盘和云台分离,仅云台旋转,一般用于调整云台姿态(英雄吊射等)/能量机关
-    case GIMBAL_FREE_MODE: // 后续删除,或加入云台追地盘的跟随模式(响应速度更快)
-        DJIMotorEnable(yaw_motor);
-        DJIMotorEnable(pitch_motor);
-        DJIMotorChangeFeed(yaw_motor, ANGLE_LOOP, MOTOR_FEED);
-        DJIMotorChangeFeed(yaw_motor, SPEED_LOOP, MOTOR_FEED);
-        DJIMotorChangeFeed(pitch_motor, ANGLE_LOOP, MOTOR_FEED);
-        DJIMotorChangeFeed(pitch_motor, SPEED_LOOP, MOTOR_FEED);
-        DJIMotorSetRef(yaw_motor, gimbal_cmd_recv.yaw); // yaw和pitch会在robot_cmd中处理好多圈和单圈
-        DJIMotorSetRef(pitch_motor, gimbal_cmd_recv.pitch);
-        break;
-    default:
-        break;
+        float t = DWT_GetTimeline_s();
+        // 方波阶跃
+        // float half_period = 0.5f / yaw_tune_freq;
+        // float step_ref = (fmodf(t, 2.0f * half_period) < half_period) ? yaw_tune_amp : -yaw_tune_amp;
+        // 正弦波（备用）
+        float step_ref = yaw_tune_amp * sinf(2.0f * 3.14159265f * yaw_tune_freq * t);
+        DJIMotorSetRef(yaw_motor, step_ref);
+    }
+    else
+    {
+        // @todo:现在已不再需要电机反馈,实际上可以始终使用IMU的姿态数据来作为云台的反馈,yaw电机的offset只是用来跟随底盘
+        // 根据控制模式进行电机反馈切换和过渡,视觉模式在robot_cmd模块就已经设置好,gimbal只看yaw_ref和pitch_ref
+        DJIMotorOuterLoop(yaw_motor, ANGLE_LOOP);
+        switch (gimbal_cmd_recv.gimbal_mode)
+        {
+        // 停止
+        case GIMBAL_ZERO_FORCE:
+            DJIMotorStop(yaw_motor);
+            DJIMotorStop(pitch_motor);
+            break;
+        // 使用陀螺仪的反馈,底盘根据yaw电机的offset跟随云台或视觉模式采用
+        case GIMBAL_GYRO_MODE: // 后续只保留此模式
+            DJIMotorEnable(yaw_motor);
+            DJIMotorEnable(pitch_motor);
+            DJIMotorChangeFeed(yaw_motor, ANGLE_LOOP, OTHER_FEED);
+            DJIMotorChangeFeed(yaw_motor, SPEED_LOOP, OTHER_FEED);
+            DJIMotorChangeFeed(pitch_motor, ANGLE_LOOP, OTHER_FEED);
+            DJIMotorChangeFeed(pitch_motor, SPEED_LOOP, OTHER_FEED);
+            DJIMotorSetRef(yaw_motor, gimbal_cmd_recv.yaw); // yaw和pitch会在robot_cmd中处理好多圈和单圈
+            DJIMotorSetRef(pitch_motor, gimbal_cmd_recv.pitch);
+            break;
+        // 云台自由模式,使用编码器反馈,底盘和云台分离,仅云台旋转,一般用于调整云台姿态(英雄吊射等)/能量机关
+        case GIMBAL_FREE_MODE: // 后续删除,或加入云台追地盘的跟随模式(响应速度更快)
+            DJIMotorEnable(yaw_motor);
+            DJIMotorEnable(pitch_motor);
+            DJIMotorChangeFeed(yaw_motor, ANGLE_LOOP, MOTOR_FEED);
+            DJIMotorChangeFeed(yaw_motor, SPEED_LOOP, MOTOR_FEED);
+            DJIMotorChangeFeed(pitch_motor, ANGLE_LOOP, MOTOR_FEED);
+            DJIMotorChangeFeed(pitch_motor, SPEED_LOOP, MOTOR_FEED);
+            DJIMotorSetRef(yaw_motor, gimbal_cmd_recv.yaw); // yaw和pitch会在robot_cmd中处理好多圈和单圈
+            DJIMotorSetRef(pitch_motor, gimbal_cmd_recv.pitch);
+            break;
+        default:
+            break;
+        }
     }
 
     // 在合适的地方添加pitch重力补偿前馈力矩
@@ -153,6 +193,12 @@ void GimbalTask()
     // 设置反馈数据,主要是imu和yaw的ecd
     gimbal_feedback_data.gimbal_imu_data = *gimbal_IMU_data;
     gimbal_feedback_data.yaw_motor_single_round_angle = yaw_motor->measure.angle_single_round;
+
+    // //update the ozone graph variables for tuning and debugging
+    // dbg_yaw_speed_ref     = yaw_motor->motor_controller.speed_PID.Ref;
+    // dbg_yaw_speed_measure = yaw_motor->motor_controller.speed_PID.Measure;
+    // dbg_yaw_angle_ref     = yaw_motor->motor_controller.angle_PID.Ref;
+    // dbg_yaw_angle_measure = yaw_motor->motor_controller.angle_PID.Measure;
 
     // 推送消息
     PubPushMessage(gimbal_pub, (void *)&gimbal_feedback_data);
