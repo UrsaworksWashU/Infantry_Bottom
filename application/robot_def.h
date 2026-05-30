@@ -27,11 +27,12 @@
 /* 机器人重要参数定义,注意根据不同机器人进行修改,浮点数需要以.0或f结尾,无符号以u结尾 */
 //TODO: change parameters according to the actual robot
 // 云台参数
-#define YAW_CHASSIS_ALIGN_ECD 0     // 云台和底盘对齐指向相同方向时的电机编码器值,若对云台有机械改动需要修改
-#define YAW_ECD_GREATER_THAN_4096 0 // ALIGN_ECD值是否大于4096,是为1,否为0;用于计算云台偏转角度
-#define PITCH_HORIZON_ECD 0         // 云台处于水平位置时编码器值,若对云台有机械改动需要修改
-#define PITCH_MAX_ANGLE 0           // 云台竖直方向最大角度 (注意反馈如果是陀螺仪，则填写陀螺仪的角度)
-#define PITCH_MIN_ANGLE 0           // 云台竖直方向最小角度 (注意反馈如果是陀螺仪，则填写陀螺仪的角度)
+#define YAW_CHASSIS_ALIGN_ECD 5935  // 云台和底盘对齐指向相同方向时的电机编码器值,若对云台有机械改动需要修改
+#define YAW_ECD_GREATER_THAN_4096 1 // ALIGN_ECD值是否大于4096,是为1,否为0;用于计算云台偏转角度
+#define PITCH_HORIZON_ECD 7609      // 云台处于水平位置时编码器值,若对云台有机械改动需要修改
+#define PITCH_MAX_ANGLE 25.0f       // 云台竖直方向最大角度,陀螺仪deg,向上为正,根据机械限位实测后修改
+#define PITCH_MIN_ANGLE -25.0f      // 云台竖直方向最小角度,陀螺仪deg,向下为负,根据机械限位实测后修改
+#define PITCH_GRAVITY_FF_COEF 1400.0f // pitch重力补偿前馈系数,电流单位,实测标定
 // 发射参数
 #define ONE_BULLET_DELTA_ANGLE 36    // 发射一发弹丸拨盘转动的距离,由机械设计图纸给出
 #define REDUCTION_RATIO_LOADER 36.0f // 2006拨盘电机的减速比,英雄需要修改为3508的19.0f
@@ -43,6 +44,11 @@
 #define CENTER_GIMBAL_OFFSET_Y 0    // 云台旋转中心距底盘几何中心的距离,左右方向,云台位于正中心时默认设为0
 #define RADIUS_WHEEL 60             // 轮子半径
 #define REDUCTION_RATIO_WHEEL 19.0f // 电机减速比,因为编码器量测的是转子的速度而不是输出轴的速度故需进行转换
+
+#define GIMBAL_YAW_SPEED_SCALE   0.6f  // 遥控器摇杆单位→deg/s，满偏±660约±396 deg/s
+#define GIMBAL_PITCH_SPEED_SCALE 0.15f // 遥控器摇杆单位→deg/s，pitch行程小故保守
+#define MOUSE_YAW_SPEED_SCALE    0.5f  // 鼠标mouse.x单位→deg/s，需实测调整
+#define MOUSE_PITCH_SPEED_SCALE  0.5f  // 鼠标mouse.y单位→deg/s，需实测调整
 
 #define GYRO2GIMBAL_DIR_YAW 1   // 陀螺仪数据相较于云台的yaw的方向,1为相同,-1为相反
 #define GYRO2GIMBAL_DIR_PITCH 1 // 陀螺仪数据相较于云台的pitch的方向,1为相同,-1为相反
@@ -93,8 +99,9 @@ typedef enum
 typedef enum
 {
     GIMBAL_ZERO_FORCE = 0, // 电流零输入
-    GIMBAL_FREE_MODE,      // 云台自由运动模式,即与底盘分离(底盘此时应为NO_FOLLOW)反馈值为电机total_angle;似乎可以改为全部用IMU数据?
-    GIMBAL_GYRO_MODE,      // 云台陀螺仪反馈模式,反馈值为陀螺仪pitch,total_yaw_angle,底盘可以为小陀螺和跟随模式
+    GIMBAL_FREE_MODE,      // 云台自由运动模式,即与底盘分离(底盘此时应为NO_FOLLOW)反馈值为电机total_angle
+    GIMBAL_SPEED_MODE,     // 手动遥控/键鼠模式,yaw/pitch字段为速度目标(deg/s),仅速度环,IMU反馈
+    GIMBAL_ANGLE_MODE,     // 角度闭环模式,yaw/pitch字段为绝对角度目标,视觉自瞄使用
 } gimbal_mode_e;
 
 // 发射模式设置
