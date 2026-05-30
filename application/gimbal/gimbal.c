@@ -18,20 +18,20 @@ static Subscriber_t *gimbal_sub;                  // cmd控制消息订阅者
 static Gimbal_Upload_Data_s gimbal_feedback_data; // 回传给cmd的云台状态信息
 static Gimbal_Ctrl_Cmd_s gimbal_cmd_recv;         // 来自cmd的控制信息
 
-// volatile variables for tuning and debugging in Ozone Timeline
-volatile float dbg_yaw_speed_ref;     
-volatile float dbg_yaw_speed_measure; 
-volatile float dbg_yaw_angle_ref;     
-volatile float dbg_yaw_angle_measure; 
+// Ozone Timeline调试变量
+volatile float dbg_pitch_speed_ref;
+volatile float dbg_pitch_speed_measure;
+volatile float dbg_pitch_angle_ref;
+volatile float dbg_pitch_angle_measure;
 
-// 速度PID反馈直接用ins_task 1kHz更新的Gyro_dps，不再需要200Hz手动转换
+// 速度环调参：Ozone把 tuning 设为1进入，0恢复正常
+// 调哪个电机就取消对应块的注释，另一个保持注释
+volatile uint8_t tuning         = 0;
+volatile float   yaw_tune_amp   = 600.0f; // deg/s，Ozone可实时改
+volatile float   yaw_tune_freq  = 0.5f;   // Hz，Ozone可实时改
+volatile float   pitch_tune_amp = 100.0f; // deg/s，pitch行程小幅值保守
+volatile float   pitch_tune_freq= 0.5f;   // Hz，Ozone可实时改
 
-// 速度环调参模式：Ozone Watches里将 yaw_speed_tuning 设为 1 进入，0 恢复正常
-volatile uint8_t yaw_speed_tuning = 0;
-volatile float yaw_tune_amp  = 600.0f; // deg/s 正弦幅值，Ozone可实时修改
-volatile float yaw_tune_freq = 0.5f;   // Hz，Ozone可实时修改
-
-// static BMI088Instance *bmi088; // 云台IMU
 void GimbalInit()
 {   
     gimbal_IMU_data = INS_Init(); // IMU先初始化,获取姿态数据指针赋给yaw电机的其他数据来源
@@ -49,7 +49,6 @@ void GimbalInit()
                 .DeadBand = 0.1,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
                 .IntegralLimit = 100,
-
                 .MaxOut = 500,
             },
             .speed_PID = {
@@ -80,7 +79,7 @@ void GimbalInit()
         },
         .controller_param_init_config = {
             .angle_PID = {
-                .Kp = 0, // 10
+                .Kp = 12,
                 .Ki = 0,
                 .Kd = 0,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
@@ -88,9 +87,9 @@ void GimbalInit()
                 .MaxOut = 500,
             },
             .speed_PID = {
-                .Kp = 50,  // 50
-                .Ki = 350, // 350
-                .Kd = 0,   // 0
+                .Kp = 120,
+                .Ki = 20,
+                .Kd = 0,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
                 .IntegralLimit = 2500,
                 .MaxOut = 20000,
@@ -126,25 +125,47 @@ void GimbalTask()
     // pitch_neg  = -gimbal_IMU_data->Pitch;
     // gyro0_neg  = -gimbal_IMU_data->Gyro[0];
 
-    if (yaw_speed_tuning)
+    if (tuning)
     {
-        // 速度环调参模式：正弦波输入，绕过正常角度控制
-        // GM6020最大速度320RPM=1920deg/s，幅值200deg/s约占10%，安全
-        DJIMotorOuterLoop(yaw_motor, SPEED_LOOP);
-        DJIMotorEnable(yaw_motor);
         float t = DWT_GetTimeline_s();
+
+        // // === YAW 速度环调参（调pitch时注释此块）===
+        // DJIMotorOuterLoop(yaw_motor, SPEED_LOOP);
+        // DJIMotorEnable(yaw_motor);
+        // DJIMotorStop(pitch_motor);
+        // // 方波阶跃
+        // // float yaw_half = 0.5f / yaw_tune_freq;
+        // // float yaw_ref = (fmodf(t, 2.0f * yaw_half) < yaw_half) ? yaw_tune_amp : -yaw_tune_amp;
+        // // 正弦波（备用）
+        // float yaw_ref = yaw_tune_amp * sinf(2.0f * 3.14159265f * yaw_tune_freq * t);
+        // DJIMotorSetRef(yaw_motor, yaw_ref);
+
+        // === PITCH 速度环调参（调yaw时注释此块）===
+        DJIMotorOuterLoop(pitch_motor, SPEED_LOOP);
+        DJIMotorEnable(pitch_motor);
+        DJIMotorStop(yaw_motor);
         // 方波阶跃
-        // float half_period = 0.5f / yaw_tune_freq;
-        // float step_ref = (fmodf(t, 2.0f * half_period) < half_period) ? yaw_tune_amp : -yaw_tune_amp;
+        float pitch_half = 0.5f / pitch_tune_freq;
+        // float pitch_ref = (fmodf(t, 2.0f * pitch_half) < pitch_half) ? pitch_tune_amp : -pitch_tune_amp;
         // 正弦波（备用）
-        float step_ref = yaw_tune_amp * sinf(2.0f * 3.14159265f * yaw_tune_freq * t);
-        DJIMotorSetRef(yaw_motor, step_ref);
+        float pitch_ref = pitch_tune_amp * sinf(2.0f * 3.14159265f * pitch_tune_freq * t);
+        // 角度限位：到达边界时只允许反向运动，同时清空积分防止windup反弹
+        float pitch_now = gimbal_IMU_data->Pitch;
+        if ((pitch_now >= PITCH_MAX_ANGLE && pitch_ref > 0) ||
+            (pitch_now <= PITCH_MIN_ANGLE && pitch_ref < 0)) {
+            pitch_ref = 0;
+            pitch_motor->motor_controller.speed_PID.ITerm      = 0;
+            pitch_motor->motor_controller.speed_PID.Iout       = 0;
+            pitch_motor->motor_controller.speed_PID.Last_ITerm = 0;
+        }
+        DJIMotorSetRef(pitch_motor, pitch_ref);
     }
     else
     {
         // @todo:现在已不再需要电机反馈,实际上可以始终使用IMU的姿态数据来作为云台的反馈,yaw电机的offset只是用来跟随底盘
         // 根据控制模式进行电机反馈切换和过渡,视觉模式在robot_cmd模块就已经设置好,gimbal只看yaw_ref和pitch_ref
         DJIMotorOuterLoop(yaw_motor, ANGLE_LOOP);
+        DJIMotorOuterLoop(pitch_motor, ANGLE_LOOP);
         switch (gimbal_cmd_recv.gimbal_mode)
         {
         // 停止
@@ -197,11 +218,10 @@ void GimbalTask()
     gimbal_feedback_data.gimbal_imu_data = *gimbal_IMU_data;
     gimbal_feedback_data.yaw_motor_single_round_angle = yaw_motor->measure.angle_single_round;
 
-    //update the ozone graph variables for tuning and debugging
-    dbg_yaw_speed_ref     = yaw_motor->motor_controller.speed_PID.Ref;
-    dbg_yaw_speed_measure = yaw_motor->motor_controller.speed_PID.Measure;
-    dbg_yaw_angle_ref     = yaw_motor->motor_controller.angle_PID.Ref;
-    dbg_yaw_angle_measure = yaw_motor->motor_controller.angle_PID.Measure;
+    dbg_pitch_speed_ref     = pitch_motor->motor_controller.speed_PID.Ref;
+    dbg_pitch_speed_measure = pitch_motor->motor_controller.speed_PID.Measure;
+    dbg_pitch_angle_ref     = pitch_motor->motor_controller.angle_PID.Ref;
+    dbg_pitch_angle_measure = pitch_motor->motor_controller.angle_PID.Measure;
 
     // 推送消息
     PubPushMessage(gimbal_pub, (void *)&gimbal_feedback_data);
