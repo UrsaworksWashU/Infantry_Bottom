@@ -135,6 +135,9 @@ void INS_Task(void)
         INS.Gyro[X] = BMI088.Gyro[X];
         INS.Gyro[Y] = BMI088.Gyro[Y];
         INS.Gyro[Z] = BMI088.Gyro[Z];
+        INS.Gyro_dps[X] = INS.Gyro[X] * 57.29577951f;
+        INS.Gyro_dps[Y] = INS.Gyro[Y] * 57.29577951f;
+        INS.Gyro_dps[Z] = INS.Gyro[Z] * 57.29577951f;
 
         // demo function,用于修正安装误差,可以不管,本demo暂时没用
         IMU_Param_Correction(&IMU_Param, INS.Gyro, INS.Accel);

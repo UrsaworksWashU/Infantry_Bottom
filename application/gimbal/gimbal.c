@@ -18,16 +18,13 @@ static Subscriber_t *gimbal_sub;                  // cmd控制消息订阅者
 static Gimbal_Upload_Data_s gimbal_feedback_data; // 回传给cmd的云台状态信息
 static Gimbal_Ctrl_Cmd_s gimbal_cmd_recv;         // 来自cmd的控制信息
 
-// // volatile variables for tuning and debugging in Ozone Timeline
-// volatile float dbg_yaw_speed_ref;     
-// volatile float dbg_yaw_speed_measure; 
-// volatile float dbg_yaw_angle_ref;     
-// volatile float dbg_yaw_angle_measure; 
+// volatile variables for tuning and debugging in Ozone Timeline
+volatile float dbg_yaw_speed_ref;     
+volatile float dbg_yaw_speed_measure; 
+volatile float dbg_yaw_angle_ref;     
+volatile float dbg_yaw_angle_measure; 
 
-// Gyro[]单位是rad/s，速度PID期望deg/s，乘(180/π)转换后作为speed反馈指针
-static float yaw_gyro_dps;   // = Gyro[2] * RAD2DEG，200Hz更新
-static float pitch_gyro_dps; // = Gyro[0] * RAD2DEG，200Hz更新
-#define RAD2DEG 57.29577951f
+// 速度PID反馈直接用ins_task 1kHz更新的Gyro_dps，不再需要200Hz手动转换
 
 // 速度环调参模式：Ozone Watches里将 yaw_speed_tuning 设为 1 进入，0 恢复正常
 volatile uint8_t yaw_speed_tuning = 0;
@@ -56,8 +53,8 @@ void GimbalInit()
                 .MaxOut = 500,
             },
             .speed_PID = {
-                .Kp = 220,  
-                .Ki = 500, 
+                .Kp = 150,  
+                .Ki = 200, 
                 .Kd = 0,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
                 .IntegralLimit = 3000,
@@ -65,7 +62,7 @@ void GimbalInit()
             },
             .other_angle_feedback_ptr = &gimbal_IMU_data->YawTotalAngle,
             // Gyro[2]是rad/s，speed PID需要deg/s，所以指向转换后的yaw_gyro_dps
-            .other_speed_feedback_ptr = &yaw_gyro_dps,
+            .other_speed_feedback_ptr = &gimbal_IMU_data->Gyro_dps[2],
         },
         .controller_setting_init_config = {
             .angle_feedback_source = OTHER_FEED,
@@ -100,7 +97,7 @@ void GimbalInit()
             },
             .other_angle_feedback_ptr = &gimbal_IMU_data->Pitch,
             // Gyro[0]是rad/s，speed PID需要deg/s，所以指向转换后的pitch_gyro_dps
-            .other_speed_feedback_ptr = &pitch_gyro_dps,
+            .other_speed_feedback_ptr = &gimbal_IMU_data->Gyro_dps[0],
         },
         .controller_setting_init_config = {
             .angle_feedback_source = OTHER_FEED,
@@ -122,10 +119,6 @@ void GimbalInit()
 /* 机器人云台控制核心任务,后续考虑只保留IMU控制,不再需要电机的反馈 */
 void GimbalTask()
 {
-    // Gyro[]是rad/s，在此转换为deg/s供速度环使用
-    yaw_gyro_dps   = gimbal_IMU_data->Gyro[2] * RAD2DEG;
-    pitch_gyro_dps = gimbal_IMU_data->Gyro[0] * RAD2DEG;
-
     // 获取云台控制数据
     // 后续增加未收到数据的处理
     SubGetMessage(gimbal_sub, &gimbal_cmd_recv);
@@ -194,11 +187,11 @@ void GimbalTask()
     gimbal_feedback_data.gimbal_imu_data = *gimbal_IMU_data;
     gimbal_feedback_data.yaw_motor_single_round_angle = yaw_motor->measure.angle_single_round;
 
-    // //update the ozone graph variables for tuning and debugging
-    // dbg_yaw_speed_ref     = yaw_motor->motor_controller.speed_PID.Ref;
-    // dbg_yaw_speed_measure = yaw_motor->motor_controller.speed_PID.Measure;
-    // dbg_yaw_angle_ref     = yaw_motor->motor_controller.angle_PID.Ref;
-    // dbg_yaw_angle_measure = yaw_motor->motor_controller.angle_PID.Measure;
+    //update the ozone graph variables for tuning and debugging
+    dbg_yaw_speed_ref     = yaw_motor->motor_controller.speed_PID.Ref;
+    dbg_yaw_speed_measure = yaw_motor->motor_controller.speed_PID.Measure;
+    dbg_yaw_angle_ref     = yaw_motor->motor_controller.angle_PID.Ref;
+    dbg_yaw_angle_measure = yaw_motor->motor_controller.angle_PID.Measure;
 
     // 推送消息
     PubPushMessage(gimbal_pub, (void *)&gimbal_feedback_data);

@@ -27,13 +27,13 @@
 
 typedef struct
 {
-    float Gyro[3];  // 角速度
-    float Accel[3]; // 加速度
-    // 还需要增加角速度数据
+    float Gyro[3];     // 角速度,单位rad/s
+    float Accel[3];    // 加速度
     float Roll;
     float Pitch;
     float Yaw;
     float YawTotalAngle;
+    float Gyro_dps[3]; // 角速度,单位deg/s,供速度PID直接使用,1kHz更新
 } attitude_t; // 最终解算得到的角度,以及yaw转动的总角度(方便多圈控制)
 
 typedef struct
@@ -55,13 +55,14 @@ typedef struct
     // float atanyz;
 
     // IMU量测值
-    float Gyro[3];  // 角速度
-    float Accel[3]; // 加速度
+    float Gyro[3];     // 角速度,单位rad/s
+    float Accel[3];    // 加速度
     // 位姿
     float Roll;
     float Pitch;
     float Yaw;
     float YawTotalAngle;
+    float Gyro_dps[3]; // 角速度,单位deg/s,1kHz与Gyro同步更新
 
     uint8_t init;
 } INS_t;
