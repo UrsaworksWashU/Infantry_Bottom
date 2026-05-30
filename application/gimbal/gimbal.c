@@ -160,8 +160,13 @@ void GimbalTask()
             DJIMotorChangeFeed(yaw_motor, SPEED_LOOP, OTHER_FEED);
             DJIMotorChangeFeed(pitch_motor, ANGLE_LOOP, OTHER_FEED);
             DJIMotorChangeFeed(pitch_motor, SPEED_LOOP, OTHER_FEED);
-            DJIMotorSetRef(yaw_motor, gimbal_cmd_recv.yaw); // yaw和pitch会在robot_cmd中处理好多圈和单圈
-            DJIMotorSetRef(pitch_motor, gimbal_cmd_recv.pitch);
+            DJIMotorSetRef(yaw_motor, gimbal_cmd_recv.yaw);
+            { // pitch软件限位
+                float pitch_ref = gimbal_cmd_recv.pitch;
+                if (pitch_ref > PITCH_MAX_ANGLE) pitch_ref = PITCH_MAX_ANGLE;
+                if (pitch_ref < PITCH_MIN_ANGLE) pitch_ref = PITCH_MIN_ANGLE;
+                DJIMotorSetRef(pitch_motor, pitch_ref);
+            }
             break;
         // 云台自由模式,使用编码器反馈,底盘和云台分离,仅云台旋转,一般用于调整云台姿态(英雄吊射等)/能量机关
         case GIMBAL_FREE_MODE: // 后续删除,或加入云台追地盘的跟随模式(响应速度更快)
@@ -171,8 +176,13 @@ void GimbalTask()
             DJIMotorChangeFeed(yaw_motor, SPEED_LOOP, MOTOR_FEED);
             DJIMotorChangeFeed(pitch_motor, ANGLE_LOOP, MOTOR_FEED);
             DJIMotorChangeFeed(pitch_motor, SPEED_LOOP, MOTOR_FEED);
-            DJIMotorSetRef(yaw_motor, gimbal_cmd_recv.yaw); // yaw和pitch会在robot_cmd中处理好多圈和单圈
-            DJIMotorSetRef(pitch_motor, gimbal_cmd_recv.pitch);
+            DJIMotorSetRef(yaw_motor, gimbal_cmd_recv.yaw);
+            { // pitch软件限位
+                float pitch_ref = gimbal_cmd_recv.pitch;
+                if (pitch_ref > PITCH_MAX_ANGLE) pitch_ref = PITCH_MAX_ANGLE;
+                if (pitch_ref < PITCH_MIN_ANGLE) pitch_ref = PITCH_MIN_ANGLE;
+                DJIMotorSetRef(pitch_motor, pitch_ref);
+            }
             break;
         default:
             break;
