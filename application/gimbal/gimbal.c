@@ -173,8 +173,30 @@ void GimbalTask()
             DJIMotorStop(yaw_motor);
             DJIMotorStop(pitch_motor);
             break;
-        // 使用陀螺仪的反馈,底盘根据yaw电机的offset跟随云台或视觉模式采用
-        case GIMBAL_GYRO_MODE: // 后续只保留此模式
+        // 手动遥控/键鼠：仅速度环，IMU反馈，pitch角度限位
+        case GIMBAL_SPEED_MODE:
+            DJIMotorEnable(yaw_motor);
+            DJIMotorEnable(pitch_motor);
+            DJIMotorOuterLoop(yaw_motor, SPEED_LOOP);
+            DJIMotorOuterLoop(pitch_motor, SPEED_LOOP);
+            DJIMotorChangeFeed(yaw_motor, SPEED_LOOP, OTHER_FEED);
+            DJIMotorChangeFeed(pitch_motor, SPEED_LOOP, OTHER_FEED);
+            DJIMotorSetRef(yaw_motor, gimbal_cmd_recv.yaw);
+            { // pitch角度限位，同时清空积分防止限位反弹
+                float pitch_speed_ref = gimbal_cmd_recv.pitch;
+                float pitch_now = gimbal_IMU_data->Pitch;
+                if ((pitch_now >= PITCH_MAX_ANGLE && pitch_speed_ref > 0) ||
+                    (pitch_now <= PITCH_MIN_ANGLE && pitch_speed_ref < 0)) {
+                    pitch_speed_ref = 0;
+                    pitch_motor->motor_controller.speed_PID.ITerm      = 0;
+                    pitch_motor->motor_controller.speed_PID.Iout       = 0;
+                    pitch_motor->motor_controller.speed_PID.Last_ITerm = 0;
+                }
+                DJIMotorSetRef(pitch_motor, pitch_speed_ref);
+            }
+            break;
+        // 视觉自瞄：角度+速度双环，IMU反馈，pitch软件限位
+        case GIMBAL_ANGLE_MODE:
             DJIMotorEnable(yaw_motor);
             DJIMotorEnable(pitch_motor);
             DJIMotorChangeFeed(yaw_motor, ANGLE_LOOP, OTHER_FEED);
