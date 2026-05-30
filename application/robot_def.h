@@ -31,6 +31,7 @@
 #define PITCH_HORIZON_ECD 7609      // 云台处于水平位置时编码器值,若对云台有机械改动需要修改
 #define PITCH_MAX_ANGLE 25.0f       // 云台竖直方向最大角度,陀螺仪deg,向上为正,根据机械限位实测后修改
 #define PITCH_MIN_ANGLE -25.0f      // 云台竖直方向最小角度,陀螺仪deg,向下为负,根据机械限位实测后修改
+#define PITCH_GRAVITY_FF_COEF 1400.0f // pitch重力补偿前馈系数,电流单位,实测标定
 // 发射参数
 #define ONE_BULLET_DELTA_ANGLE 36    // 发射一发弹丸拨盘转动的距离,由机械设计图纸给出
 #define REDUCTION_RATIO_LOADER 36.0f // 2006拨盘电机的减速比,英雄需要修改为3508的19.0f

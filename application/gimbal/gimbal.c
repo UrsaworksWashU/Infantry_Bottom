@@ -24,6 +24,10 @@ volatile float dbg_pitch_speed_measure;
 volatile float dbg_pitch_angle_ref;
 volatile float dbg_pitch_angle_measure;
 
+// pitch重力补偿前馈，电流单位（同speed PID MaxOut），Ozone实时调参，调好后写入robot_def.h
+static float   pitch_gravity_ff      = 0.0f; // 由motor_task 1kHz读取，必须是static全局
+volatile float pitch_gravity_ff_coef = PITCH_GRAVITY_FF_COEF; // Ozone可实时改，正值=向上补偿，符号不对则取负
+
 // 速度环调参：Ozone把 tuning 设为1进入，0恢复正常
 // 调哪个电机就取消对应块的注释，另一个保持注释
 volatile uint8_t tuning         = 0;
@@ -97,6 +101,7 @@ void GimbalInit()
             .other_angle_feedback_ptr = &gimbal_IMU_data->Pitch,
             // Gyro[0]是rad/s，speed PID需要deg/s，所以指向转换后的pitch_gyro_dps
             .other_speed_feedback_ptr = &gimbal_IMU_data->Gyro_dps[0],
+            .current_feedforward_ptr  = &pitch_gravity_ff,
         },
         .controller_setting_init_config = {
             .angle_feedback_source = OTHER_FEED,
@@ -104,6 +109,7 @@ void GimbalInit()
             .outer_loop_type = ANGLE_LOOP,
             .close_loop_type = SPEED_LOOP | ANGLE_LOOP,
             .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
+            .feedforward_flag   = CURRENT_FEEDFORWARD,
         },
         .motor_type = GM6020,
     };
@@ -232,9 +238,8 @@ void GimbalTask()
         }
     }
 
-    // 在合适的地方添加pitch重力补偿前馈力矩
-    // 根据IMU姿态/pitch电机角度反馈计算出当前配重下的重力矩
-    // ...
+    // pitch重力补偿前馈：注入到speed PID输出之后（电流单位），motor_task 1kHz读取
+    pitch_gravity_ff = pitch_gravity_ff_coef * cosf(gimbal_IMU_data->Pitch * (3.14159265f / 180.0f));
 
     // 设置反馈数据,主要是imu和yaw的ecd
     gimbal_feedback_data.gimbal_imu_data = *gimbal_IMU_data;
