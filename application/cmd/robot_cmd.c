@@ -135,32 +135,36 @@ static void CalcOffsetAngle()
 }
 
 /**
- * @brief 控制输入为遥控器(调试时)的模式和控制量设置
+ * @brief Control logics and coefficients when using remote controller
  *
  */
 static void RemoteControlSet()
 {
-    // 控制底盘和云台运行模式,云台待添加,云台是否始终使用IMU数据?
-    if (switch_is_down(rc_data[TEMP].rc.switch_right)) // 右侧开关状态[下],底盘跟随云台
+    // Control logics for chassis and gimbal when using remote controller
+    // When right switch is down, gimbal in angle mode and chassis in rotation mode
+    if (switch_is_down(rc_data[TEMP].rc.switch_right)) 
     {
         chassis_cmd_send.chassis_mode = CHASSIS_ROTATE;
         gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
     }
-    else if (switch_is_mid(rc_data[TEMP].rc.switch_right)) // 右侧开关状态[中],底盘和云台分离,底盘保持不转动
+    // When right switch is mid, gimbal in angle mode and chassis follow gimbal yaw
+    else if (switch_is_mid(rc_data[TEMP].rc.switch_right)) 
     {
-        chassis_cmd_send.chassis_mode = CHASSIS_NO_FOLLOW;
+        chassis_cmd_send.chassis_mode = CHASSIS_FOLLOW_GIMBAL_YAW;
         gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
     }
 
-    // 云台参数,左侧开关[下]时摇杆控制
-    gimbal_cmd_send.yaw   += -0.005f * (float)rc_data[TEMP].rc.rocker_r_; // horizontal controller stick negative left, positive right
-    gimbal_cmd_send.pitch +=  0.001f * (float)rc_data[TEMP].rc.rocker_r1;
-    // Angle limit for pitch motor
+    // Gimbal control coefficients, right stick horizontal for yaw, vertical for pitch
+    // horizontal controller stick negative left, positive right
+    gimbal_cmd_send.pitch +=  0.001f * (float)rc_data[TEMP].rc.rocker_r1; // r1 for horizontal direction
+    gimbal_cmd_send.yaw   += -0.005f * (float)rc_data[TEMP].rc.rocker_r_; // r for vertical direction
+    // Put it here rather than gimbal.c so pitch can have continuous control when hitting the limit, 
+    // it doesn't need to counteract the exceeded values
     if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
     if (gimbal_cmd_send.pitch < PITCH_MIN_ANGLE) gimbal_cmd_send.pitch = PITCH_MIN_ANGLE;
 
-    // 底盘参数,目前没有加入小陀螺(调试似乎暂时没有必要),系数需要调整
-    //negative sign to align controller output with RHR(right hand rule: x forward, y left, wz counterclockwise positive)
+    // Chassis control coefficients, left stick vertical for forward/backward, horizontal for left/right
+    // Negative sign to align controller output with RHR(right hand rule: x forward, y left, wz counterclockwise positive)
     chassis_cmd_send.vx =  10.0f * (float)rc_data[TEMP].rc.rocker_l1; // l1 for vertical direction
     chassis_cmd_send.vy = -10.0f * (float)rc_data[TEMP].rc.rocker_l_; // l_ for horizontal direction
 
