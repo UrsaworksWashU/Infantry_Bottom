@@ -153,7 +153,7 @@ static void RobotModeTest(Referee_Interactive_info_t *_Interactive_data) // æµ‹è
     case 2:
     {
         _Interactive_data->chassis_mode = CHASSIS_NO_FOLLOW;
-        _Interactive_data->gimbal_mode = GIMBAL_SPEED_MODE;
+        _Interactive_data->gimbal_mode = GIMBAL_ANGLE_MODE;
         _Interactive_data->shoot_mode = SHOOT_ON;
         _Interactive_data->friction_mode = FRICTION_ON;
         _Interactive_data->lid_mode = LID_OPEN;
@@ -211,11 +211,6 @@ static void MyUIRefresh(referee_info_t *referee_recv_info, Referee_Interactive_i
         case GIMBAL_FREE_MODE:
         {
             UICharDraw(&UI_State_dyn[1], "sd1", UI_Graph_Change, 8, UI_Color_Yellow, 15, 2, 270, 700, "free     ");
-            break;
-        }
-        case GIMBAL_SPEED_MODE:
-        {
-            UICharDraw(&UI_State_dyn[1], "sd1", UI_Graph_Change, 8, UI_Color_Yellow, 15, 2, 270, 700, "speed    ");
             break;
         }
         case GIMBAL_ANGLE_MODE:

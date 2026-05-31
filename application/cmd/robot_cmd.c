@@ -157,22 +157,25 @@ static void RemoteControlSet()
     if (switch_is_down(rc_data[TEMP].rc.switch_right)) // 右侧开关状态[下],底盘跟随云台
     {
         chassis_cmd_send.chassis_mode = CHASSIS_ROTATE;
-        gimbal_cmd_send.gimbal_mode = GIMBAL_SPEED_MODE;
+        gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
     }
     else if (switch_is_mid(rc_data[TEMP].rc.switch_right)) // 右侧开关状态[中],底盘和云台分离,底盘保持不转动
     {
         chassis_cmd_send.chassis_mode = CHASSIS_NO_FOLLOW;
-        gimbal_cmd_send.gimbal_mode = GIMBAL_SPEED_MODE;
+        gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
     }
 
-    // 云台速度目标，右摇杆直接映射为deg/s（左摇杆已用于底盘）
-    gimbal_cmd_send.yaw   = -GIMBAL_YAW_SPEED_SCALE   * (float)rc_data[TEMP].rc.rocker_r_;
-    gimbal_cmd_send.pitch =  GIMBAL_PITCH_SPEED_SCALE  * (float)rc_data[TEMP].rc.rocker_r1;
+    // 云台参数,左侧开关[下]时摇杆控制
+    gimbal_cmd_send.yaw   += -0.005f * (float)rc_data[TEMP].rc.rocker_r_; // horizontal controller stick negative left, positive right
+    gimbal_cmd_send.pitch +=  0.001f * (float)rc_data[TEMP].rc.rocker_r1;
+    // Angle limit for pitch motor
+    if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
+    if (gimbal_cmd_send.pitch < PITCH_MIN_ANGLE) gimbal_cmd_send.pitch = PITCH_MIN_ANGLE;
 
     // 底盘参数,目前没有加入小陀螺(调试似乎暂时没有必要),系数需要调整
+    //negative sign to align controller output with RHR(right hand rule: x forward, y left, wz counterclockwise positive)
     chassis_cmd_send.vx =  10.0f * (float)rc_data[TEMP].rc.rocker_l1; // l1 for vertical direction
     chassis_cmd_send.vy = -10.0f * (float)rc_data[TEMP].rc.rocker_l_; // l_ for horizontal direction
-        //negative sign to align controller output with RHR(right hand rule: x forward, y left, wz counterclockwise positive)
 
     // 发射参数
     if (switch_is_up(rc_data[TEMP].rc.switch_right)) // 右侧开关状态[上],弹舱打开
@@ -218,9 +221,11 @@ static void MouseKeySet()
     chassis_cmd_send.vx = rc_data[TEMP].key[KEY_PRESS].w * 300 - rc_data[TEMP].key[KEY_PRESS].s * 300; // 系数待测
     chassis_cmd_send.vy = rc_data[TEMP].key[KEY_PRESS].s * 300 - rc_data[TEMP].key[KEY_PRESS].d * 300;
 
-    gimbal_cmd_send.gimbal_mode = GIMBAL_SPEED_MODE;
-    gimbal_cmd_send.yaw   =  (float)rc_data[TEMP].mouse.x * MOUSE_YAW_SPEED_SCALE;
-    gimbal_cmd_send.pitch = -(float)rc_data[TEMP].mouse.y * MOUSE_PITCH_SPEED_SCALE;
+    gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
+    gimbal_cmd_send.yaw   +=  (float)rc_data[TEMP].mouse.x * 0.005f;
+    gimbal_cmd_send.pitch += -(float)rc_data[TEMP].mouse.y * 0.001f;
+    if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
+    if (gimbal_cmd_send.pitch < PITCH_MIN_ANGLE) gimbal_cmd_send.pitch = PITCH_MIN_ANGLE;
 
     switch (rc_data[TEMP].key_count[KEY_PRESS][Key_Z] % 3) // Z键设置弹速
     {
