@@ -127,24 +127,11 @@ void RobotCMDInit()
  */
 static void CalcOffsetAngle()
 {
-    // 别名angle提高可读性,不然太长了不好看,虽然基本不会动这个函数
-    static float angle;
-    angle = gimbal_fetch_data.yaw_motor_single_round_angle; // 从云台获取的当前yaw电机单圈角度
-#if YAW_ECD_GREATER_THAN_4096                               // 如果大于180度
-    if (angle > YAW_ALIGN_ANGLE && angle <= 180.0f + YAW_ALIGN_ANGLE)
-        chassis_cmd_send.offset_angle = angle - YAW_ALIGN_ANGLE;
-    else if (angle > 180.0f + YAW_ALIGN_ANGLE)
-        chassis_cmd_send.offset_angle = angle - YAW_ALIGN_ANGLE - 360.0f;
-    else
-        chassis_cmd_send.offset_angle = angle - YAW_ALIGN_ANGLE;
-#else // 小于180度
-    if (angle > YAW_ALIGN_ANGLE)
-        chassis_cmd_send.offset_angle = angle - YAW_ALIGN_ANGLE;
-    else if (angle <= YAW_ALIGN_ANGLE && angle >= YAW_ALIGN_ANGLE - 180.0f)
-        chassis_cmd_send.offset_angle = angle - YAW_ALIGN_ANGLE;
-    else
-        chassis_cmd_send.offset_angle = angle - YAW_ALIGN_ANGLE + 360.0f;
-#endif
+    float angle = gimbal_fetch_data.yaw_motor_single_round_angle;
+    float offset = angle - YAW_ALIGN_ANGLE;
+    if (offset > 180.0f)  offset -= 360.0f;
+    if (offset < -180.0f) offset += 360.0f;
+    chassis_cmd_send.offset_angle = offset;
 }
 
 /**
