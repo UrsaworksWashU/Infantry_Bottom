@@ -116,6 +116,7 @@ void VisionSend()
 
 #include "bsp_usb.h"
 #include "ins_task.h"
+#include "string.h"
 
 static uint8_t *vis_recv_buff;
 
@@ -163,48 +164,61 @@ static uint16_t sp_crc16(const uint8_t *data, uint32_t len)
     return crc;
 }
 
-/* SP header protocol structs — must match Vision26 io/gimbal/gimbal.hpp exactly */
-#pragma pack(1)
-typedef struct {
-    uint8_t  head[2];       /* {'S', 'P'} */
-    uint8_t  mode;          /* 0=idle, 1=auto_aim, 2=small_buff, 3=big_buff */
-    float    q[4];          /* wxyz quaternion */
-    float    yaw;           /* deg */
-    float    yaw_vel;       /* rad/s */
-    float    pitch;         /* deg */
-    float    pitch_vel;     /* rad/s */
-    float    bullet_speed;  /* m/s */
-    uint16_t bullet_count;
-    uint16_t crc16;
-} GimbalToVision_s;         /* 43 bytes */
-
-typedef struct {
-    uint8_t  head[2];       /* {'S', 'P'} */
-    uint8_t  mode;          /* 0=no ctrl, 1=ctrl no fire, 2=ctrl+fire */
-    float    yaw;           /* deg — absolute target */
-    float    yaw_vel;
-    float    yaw_acc;
-    float    pitch;         /* deg — absolute target */
-    float    pitch_vel;
-    float    pitch_acc;
-    uint16_t crc16;
-} VisionToGimbal_s;         /* 29 bytes */
-#pragma pack()
+/*
+ * SP protocol wire layout (Vision26 io/gimbal/gimbal.hpp, __attribute__((packed))):
+ *
+ * GimbalToVision (STM32 → Jetson), 43 bytes:
+ *   [0]      'S'
+ *   [1]      'P'
+ *   [2]      mode  (0=idle, 1=auto_aim, 2=small_buff, 3=big_buff)
+ *   [3–6]    q[0] w  (float LE)
+ *   [7–10]   q[1] x
+ *   [11–14]  q[2] y
+ *   [15–18]  q[3] z
+ *   [19–22]  yaw       (float, deg)
+ *   [23–26]  yaw_vel   (float, rad/s)
+ *   [27–30]  pitch     (float, deg)
+ *   [31–34]  pitch_vel (float, rad/s)
+ *   [35–38]  bullet_speed (float, m/s)
+ *   [39–40]  bullet_count (uint16 LE)
+ *   [41–42]  crc16 (LE)
+ *
+ * VisionToGimbal (Jetson → STM32), 29 bytes:
+ *   [0]      'S'
+ *   [1]      'P'
+ *   [2]      mode  (0=no ctrl, 1=ctrl no fire, 2=ctrl+fire)
+ *   [3–6]    yaw       (float, deg)
+ *   [7–10]   yaw_vel
+ *   [11–14]  yaw_acc
+ *   [15–18]  pitch     (float, deg)
+ *   [19–22]  pitch_vel
+ *   [23–26]  pitch_acc
+ *   [27–28]  crc16 (LE)
+ *
+ * Note: floats sit at odd byte offsets in the packed wire format. On Cortex-M4 the
+ * FPU (VLDR/VSTR) requires 4-byte alignment and will HardFault on unaligned access.
+ * All float I/O therefore goes through memcpy into aligned local variables.
+ */
+#define GIMBAL_TO_VISION_SIZE 43u
+#define VISION_TO_GIMBAL_SIZE 29u
 
 static void DecodeVision(uint16_t recv_len)
 {
-    if (recv_len < sizeof(VisionToGimbal_s)) return;
+    if (recv_len < VISION_TO_GIMBAL_SIZE) return;
 
-    VisionToGimbal_s *pkt = (VisionToGimbal_s *)vis_recv_buff;
-    if (pkt->head[0] != 'S' || pkt->head[1] != 'P') return;
-    if (sp_crc16((uint8_t *)pkt, sizeof(VisionToGimbal_s) - 2) != pkt->crc16) return;
+    const uint8_t *p = vis_recv_buff;
+    if (p[0] != 'S' || p[1] != 'P') return;
+
+    uint16_t crc = (uint16_t)p[VISION_TO_GIMBAL_SIZE - 2] |
+                   ((uint16_t)p[VISION_TO_GIMBAL_SIZE - 1] << 8);
+    if (sp_crc16(p, VISION_TO_GIMBAL_SIZE - 2) != crc) return;
 
     DaemonReload(vision_daemon_instance);
 
-    recv_data.yaw   = pkt->yaw;
-    recv_data.pitch = pkt->pitch;
+    memcpy(&recv_data.yaw,   p + 3,  4);
+    memcpy(&recv_data.pitch, p + 15, 4);
 
-    switch (pkt->mode) {
+    switch (p[2]) {
         case 2:
             recv_data.fire_mode    = AUTO_FIRE;
             recv_data.target_state = READY_TO_FIRE;
@@ -222,7 +236,7 @@ static void DecodeVision(uint16_t recv_len)
 
 /* 视觉通信初始化
  * Jetson端需建立udev规则将/dev/ttyACM0映射为/dev/gimbal:
- *   SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", SYMLINK+="gimbal"
+ *   SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="00ca", SYMLINK+="gimbal"
  */
 Vision_Recv_s *VisionInit(UART_HandleTypeDef *_handle)
 {
@@ -242,27 +256,44 @@ Vision_Recv_s *VisionInit(UART_HandleTypeDef *_handle)
 
 void VisionSend()
 {
-    static GimbalToVision_s pkt = {.head = {'S', 'P'}};
+    static uint8_t buf[GIMBAL_TO_VISION_SIZE];
+    float q[4];
+    float zero = 0.0f;
+    float bullet_spd;
+    uint16_t count = 0;
+    uint16_t crc;
+    uint8_t mode;
 
     switch (send_data.work_mode) {
-        case VISION_MODE_SMALL_BUFF: pkt.mode = 2; break;
-        case VISION_MODE_BIG_BUFF:   pkt.mode = 3; break;
-        case VISION_MODE_AIM:        pkt.mode = 1; break;
-        default:                     pkt.mode = 0; break;
+        case VISION_MODE_SMALL_BUFF: mode = 2; break;
+        case VISION_MODE_BIG_BUFF:   mode = 3; break;
+        case VISION_MODE_AIM:        mode = 1; break;
+        default:                     mode = 0; break;
     }
 
-    /* Quaternion from Euler angles (degrees); q order: w x y z */
-    EularAngleToQuaternion(send_data.yaw, send_data.pitch, send_data.roll, pkt.q);
+    /* q[] is stack-allocated and aligned; EularAngleToQuaternion takes degrees */
+    EularAngleToQuaternion(send_data.yaw, send_data.pitch, send_data.roll, q);
+    bullet_spd = (float)send_data.bullet_speed;
 
-    pkt.yaw         = send_data.yaw;
-    pkt.yaw_vel     = 0.0f; /* TODO: wire up from gimbal_fetch_data.gimbal_imu_data.Gyro[Z] */
-    pkt.pitch       = send_data.pitch;
-    pkt.pitch_vel   = 0.0f; /* TODO: wire up from gimbal_fetch_data.gimbal_imu_data.Gyro[Y] */
-    pkt.bullet_speed = (float)send_data.bullet_speed;
-    pkt.bullet_count = 0;
+    buf[0] = 'S';
+    buf[1] = 'P';
+    buf[2] = mode;
+    memcpy(buf + 3,  &q[0],            4);
+    memcpy(buf + 7,  &q[1],            4);
+    memcpy(buf + 11, &q[2],            4);
+    memcpy(buf + 15, &q[3],            4);
+    memcpy(buf + 19, &send_data.yaw,   4);
+    memcpy(buf + 23, &zero,            4); /* yaw_vel */
+    memcpy(buf + 27, &send_data.pitch, 4);
+    memcpy(buf + 31, &zero,            4); /* pitch_vel */
+    memcpy(buf + 35, &bullet_spd,      4);
+    memcpy(buf + 39, &count,           2); /* bullet_count */
 
-    pkt.crc16 = sp_crc16((uint8_t *)&pkt, sizeof(pkt) - 2);
-    USBTransmit((uint8_t *)&pkt, sizeof(pkt));
+    crc = sp_crc16(buf, GIMBAL_TO_VISION_SIZE - 2);
+    buf[41] = (uint8_t)(crc & 0xff);
+    buf[42] = (uint8_t)(crc >> 8);
+
+    USBTransmit(buf, GIMBAL_TO_VISION_SIZE);
 }
 
 #endif // VISION_USE_VCP
