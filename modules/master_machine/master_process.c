@@ -271,8 +271,12 @@ void VisionSend()
         default:                     mode = 0; break;
     }
 
-    /* q[] is stack-allocated and aligned; EularAngleToQuaternion takes degrees */
-    EularAngleToQuaternion(send_data.yaw, send_data.pitch, send_data.roll, q);
+    /* 直接发送INS原始四元数(wxyz),避免欧拉角往返转换的精度/约定损失 */
+    const float *ins_q = INS_GetQuaternion();
+    q[0] = ins_q[0];
+    q[1] = ins_q[1];
+    q[2] = ins_q[2];
+    q[3] = ins_q[3];
     bullet_spd = (float)send_data.bullet_speed;
 
     buf[0] = 'S';

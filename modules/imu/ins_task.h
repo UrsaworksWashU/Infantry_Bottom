@@ -86,6 +86,14 @@ typedef struct
 attitude_t *INS_Init(void);
 
 /**
+ * @brief 获取原始姿态四元数指针(wxyz顺序),供视觉等直接发送原始四元数使用
+ *        避免欧拉角往返转换带来的精度/约定损失
+ *
+ * @return const float* 指向INS.q[4]的指针
+ */
+const float *INS_GetQuaternion(void);
+
+/**
  * @brief 此函数放入实时系统中,以1kHz频率运行
  *        p.s. osDelay(1);
  *
