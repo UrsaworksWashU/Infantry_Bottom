@@ -195,10 +195,14 @@ static void RemoteControlSet()
 static void VisionControlSet()
 {
     gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
+    chassis_cmd_send.chassis_mode = CHASSIS_NO_FOLLOW; 
+
+     // 视觉模块发送的yaw/pitch是绝对角度值,直接作为云台目标角度
     if (vision_recv_data->target_state != NO_TARGET)
     {
-        gimbal_cmd_send.yaw   = gimbal_fetch_data.gimbal_imu_data.YawTotalAngle + vision_recv_data->yaw;
-        gimbal_cmd_send.pitch = -gimbal_fetch_data.gimbal_imu_data.Pitch        + vision_recv_data->pitch;
+        /* Vision26 planner sends absolute world-frame angles in radians */
+        gimbal_cmd_send.yaw   =  vision_recv_data->yaw   * 57.2957795f;
+        gimbal_cmd_send.pitch = -vision_recv_data->pitch * 57.2957795f;
     }
     // 无目标时保持当前角度不动
 }
@@ -346,8 +350,8 @@ void RobotCMDTask()
     EmergencyHandler(); // 处理模块离线和遥控器急停等紧急情况
 
     // 设置视觉发送数据,还需增加加速度和角速度数据
-    // VisionSetFlag(chassis_fetch_data.enemy_color,,chassis_fetch_data.bullet_speed)
-
+    // VisionSetFlag(chassis_fetch_data.enemy_color, VISION_MODE_AIM, chassis_fetch_data.bullet_speed);
+    VisionSetFlag(COLOR_RED, VISION_MODE_AIM, SMALL_AMU_15); // TODO: get color/speed from referee
     // 发送当前云台姿态给上位机用于弹道解算
     VisionSetAltitude(gimbal_fetch_data.gimbal_imu_data.YawTotalAngle,
                       gimbal_fetch_data.gimbal_imu_data.Pitch,
