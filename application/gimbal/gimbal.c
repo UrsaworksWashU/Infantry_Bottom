@@ -23,6 +23,10 @@ volatile float dbg_pitch_speed_ref;
 volatile float dbg_pitch_speed_measure;
 volatile float dbg_pitch_angle_ref;
 volatile float dbg_pitch_angle_measure;
+volatile float dbg_yaw_speed_ref;
+volatile float dbg_yaw_speed_measure;
+volatile float dbg_yaw_angle_ref;
+volatile float dbg_yaw_angle_measure;
 
 // pitch重力补偿前馈，电流单位（同speed PID MaxOut），Ozone实时调参，调好后写入robot_def.h
 static float   pitch_gravity_ff      = 0.0f; // 由motor_task 1kHz读取，必须是static全局
@@ -227,6 +231,10 @@ void GimbalTask()
     dbg_pitch_speed_measure = pitch_motor->motor_controller.speed_PID.Measure;
     dbg_pitch_angle_ref     = pitch_motor->motor_controller.angle_PID.Ref;
     dbg_pitch_angle_measure = pitch_motor->motor_controller.angle_PID.Measure;
+    dbg_yaw_speed_ref       = yaw_motor->motor_controller.speed_PID.Ref;
+    dbg_yaw_speed_measure   = yaw_motor->motor_controller.speed_PID.Measure;
+    dbg_yaw_angle_ref       = yaw_motor->motor_controller.angle_PID.Ref;
+    dbg_yaw_angle_measure   = yaw_motor->motor_controller.angle_PID.Measure;
 
     // 推送消息
     PubPushMessage(gimbal_pub, (void *)&gimbal_feedback_data);

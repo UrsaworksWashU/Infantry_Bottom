@@ -195,7 +195,7 @@ static void RemoteControlSet()
 static void VisionControlSet()
 {
     gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
-    chassis_cmd_send.chassis_mode = CHASSIS_NO_FOLLOW; 
+    chassis_cmd_send.chassis_mode = CHASSIS_FOLLOW_GIMBAL_YAW; 
 
      // 视觉模块发送的yaw/pitch是绝对角度值,直接作为云台目标角度
     if (vision_recv_data->target_state != NO_TARGET)
