@@ -101,7 +101,9 @@ void VisionSend()
     static uint8_t send_buff[VISION_SEND_SIZE];
     static uint16_t tx_len;
     // TODO: code to set flag_register
-    flag_register = 30 << 8 | 0b00000001;
+    flag_register = (uint16_t)(send_data.bullet_speed) << 8 |
+                    (uint8_t)(send_data.work_mode) << 2 |
+                    (uint8_t)(send_data.enemy_color);
     // 将数据转化为seasky协议的数据包
     get_protocol_send_data(0x02, flag_register, &send_data.yaw, 3, send_buff, &tx_len);
     USARTSend(vision_usart_instance, send_buff, tx_len, USART_TRANSFER_DMA); // 和视觉通信使用IT,防止和接收使用的DMA冲突
@@ -150,7 +152,9 @@ void VisionSend()
     static uint8_t send_buff[VISION_SEND_SIZE];
     static uint16_t tx_len;
     // TODO: code to set flag_register
-    flag_register = 30 << 8 | 0b00000001;
+    flag_register = (uint16_t)(send_data.bullet_speed) << 8 |
+                    (uint8_t)(send_data.work_mode) << 2 |
+                    (uint8_t)(send_data.enemy_color);
     // 将数据转化为seasky协议的数据包
     get_protocol_send_data(0x02, flag_register, &send_data.yaw, 3, send_buff, &tx_len);
     USBTransmit(send_buff, tx_len);
