@@ -192,16 +192,19 @@ static void RemoteControlSet()
  * @brief 控制输入为视觉上位机时的模式和控制量设置
  *
  */
-static void VisionControlSet()
-{
-    gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
-    if (vision_recv_data->target_state != NO_TARGET)
-    {
-        gimbal_cmd_send.yaw   = gimbal_fetch_data.gimbal_imu_data.YawTotalAngle + vision_recv_data->yaw;
-        gimbal_cmd_send.pitch = -gimbal_fetch_data.gimbal_imu_data.Pitch        + vision_recv_data->pitch;
-    }
-    // 无目标时保持当前角度不动
-}
+  static void VisionControlSet()
+  {
+      gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
+      if (vision_recv_data->target_state != NO_TARGET)
+      {
+          float target_yaw = vision_recv_data->yaw * 57.2958f;   // absolute, (-180,180] deg
+          float err = target_yaw - gimbal_fetch_data.gimbal_imu_data.YawTotalAngle;
+          while (err >  180.0f) err -= 360.0f;                    // wrap to shortest path
+          while (err < -180.0f) err += 360.0f;
+          gimbal_cmd_send.yaw   = gimbal_fetch_data.gimbal_imu_data.YawTotalAngle + err;
+          gimbal_cmd_send.pitch = -vision_recv_data->pitch * 57.2958f;
+      }
+  }
 
 /**
  * @brief 输入为键鼠时模式和控制量设置
