@@ -87,15 +87,15 @@ void ChassisInit()
     chassis_motor_config.controller_setting_init_config.motor_reverse_flag = MOTOR_DIRECTION_NORMAL;
     motor_lf = PowerControlInit(&chassis_motor_config);
 
-    chassis_motor_config.can_init_config.tx_id = 3;
+    chassis_motor_config.can_init_config.tx_id = 2;
     chassis_motor_config.controller_setting_init_config.motor_reverse_flag = MOTOR_DIRECTION_NORMAL;
     motor_rf = PowerControlInit(&chassis_motor_config);
 
-    chassis_motor_config.can_init_config.tx_id = 1;
+    chassis_motor_config.can_init_config.tx_id = 3;
     chassis_motor_config.controller_setting_init_config.motor_reverse_flag = MOTOR_DIRECTION_NORMAL;
     motor_lb = PowerControlInit(&chassis_motor_config);
 
-    chassis_motor_config.can_init_config.tx_id = 2;
+    chassis_motor_config.can_init_config.tx_id = 1;
     chassis_motor_config.controller_setting_init_config.motor_reverse_flag = MOTOR_DIRECTION_NORMAL;
     motor_rb = PowerControlInit(&chassis_motor_config);
 
