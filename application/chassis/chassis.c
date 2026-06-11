@@ -46,7 +46,7 @@ static PIDInstance buffer_PID;             // 用于底盘的缓冲能量PID
 static PIDInstance chassis_follow_PID;     // 底盘跟随云台yaw的PID
 static referee_info_t *referee_data;       // 用于获取裁判系统的数据
 // 老步兵裁判系统(电源管理)未接线,功率上限恒为0会让底盘停转;此处用一个可在Ozone中实时修改的变量替代(单位:W)
-static volatile float chassis_power_limit_fixed = 30.0f;
+static volatile float chassis_power_limit_fixed = 20.0f;
 static Referee_Interactive_info_t ui_data; // UI数据，将底盘中的数据传入此结构体的对应变量中，UI会自动检测是否变化，对应显示UI
 
 static SuperCapInstance *cap;                                       // 超级电容
