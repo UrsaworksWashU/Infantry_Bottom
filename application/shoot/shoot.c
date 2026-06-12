@@ -27,7 +27,7 @@ void ShootInit()
         },
         .controller_param_init_config = {
             .speed_PID = {
-                .Kp = 0, // 20
+                .Kp = 5, // 20
                 .Ki = 0, // 1
                 .Kd = 0,
                 .Improve = PID_Integral_Limit,
@@ -35,8 +35,8 @@ void ShootInit()
                 .MaxOut = 15000,
             },
             .current_PID = {
-                .Kp = 0, // 0.7
-                .Ki = 0, // 0.1
+                .Kp = 0.7, // 0.7
+                .Ki = 0.1, // 0.1
                 .Kd = 0,
                 .Improve = PID_Integral_Limit,
                 .IntegralLimit = 10000,
@@ -49,14 +49,14 @@ void ShootInit()
 
             .outer_loop_type = SPEED_LOOP,
             .close_loop_type = SPEED_LOOP | CURRENT_LOOP,
-            .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
+            .motor_reverse_flag = MOTOR_DIRECTION_REVERSE, // 注意方向设置为发射的出弹方向
         },
         .motor_type = M3508};
     friction_config.can_init_config.tx_id = 1,
     friction_l = DJIMotorInit(&friction_config);
 
     friction_config.can_init_config.tx_id = 2; // 右摩擦轮,改txid和方向就行
-    friction_config.controller_setting_init_config.motor_reverse_flag = MOTOR_DIRECTION_REVERSE;
+    friction_config.controller_setting_init_config.motor_reverse_flag = MOTOR_DIRECTION_NORMAL;
     friction_r = DJIMotorInit(&friction_config);
 
     // 拨盘电机
@@ -187,8 +187,8 @@ void ShootTask()
             DJIMotorSetRef(friction_r, 0);
             break;
         default: // 当前为了调试设定的默认值4000,因为还没有加入裁判系统无法读取弹速.
-            DJIMotorSetRef(friction_l, 30000);
-            DJIMotorSetRef(friction_r, 30000);
+            DJIMotorSetRef(friction_l, 4000);
+            DJIMotorSetRef(friction_r, 4000);
             break;
         }
     }

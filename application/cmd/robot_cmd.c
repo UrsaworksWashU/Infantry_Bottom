@@ -118,6 +118,7 @@ void RobotCMDInit()
     gimbal_cmd_send.pitch = 0;
 
     robot_state = ROBOT_READY; // 启动时机器人进入工作模式,后续加入所有应用初始化完成之后再进入
+    shoot_cmd_send.shoot_mode = SHOOT_ON; // 初始化即使能发射机构,飞轮由拨轮控制
 }
 
 /**
