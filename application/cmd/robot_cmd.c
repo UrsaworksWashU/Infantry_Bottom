@@ -150,8 +150,13 @@ static void RemoteControlSet()
     // When right switch is mid, gimbal in angle mode and chassis follow gimbal yaw
     else if (switch_is_mid(rc_data[TEMP].rc.switch_right)) 
     {
-        chassis_cmd_send.chassis_mode = CHASSIS_NO_FOLLOW;
+        chassis_cmd_send.chassis_mode = CHASSIS_ROTATE_INVERSE;
         gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
+    }
+    else // When right switch is up, gimbal in free mode and chassis in no-follow mode
+    {
+        chassis_cmd_send.chassis_mode = CHASSIS_NO_FOLLOW;
+        gimbal_cmd_send.gimbal_mode = GIMBAL_FREE_MODE;
     }
 
     // Gimbal control coefficients, right stick horizontal for yaw, vertical for pitch
