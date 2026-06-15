@@ -46,6 +46,8 @@ static Shoot_Upload_Data_s shoot_fetch_data; // 从发射获取的反馈信息
 
 static Robot_Status_e robot_state; // 机器人整体工作状态
 
+volatile float dbg_shoot_speed;
+
 BMI088Instance *bmi088_test; // 云台IMU
 BMI088_Data_t bmi088_data;
 void RobotCMDInit()
@@ -186,7 +188,7 @@ static void RemoteControlSet()
     else
         shoot_cmd_send.load_mode = LOAD_STOP;
     // 射频控制,固定每秒1发,后续可以根据左侧拨轮的值大小切换射频,测试小于25Hz都稳定,大于未测试
-    shoot_cmd_send.shoot_rate = 25.0f;
+    shoot_cmd_send.shoot_rate = dbg_shoot_speed;
 }
 
 /**

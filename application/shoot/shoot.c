@@ -25,6 +25,11 @@ volatile float dbg_loader_speed_ref;
 volatile float dbg_loader_speed_measure;
 volatile float dbg_loader_angle_ref;
 volatile float dbg_loader_angle_measure;
+volatile float dbg_friction_l_speed_ref;
+volatile float dbg_friction_l_speed_measure;
+volatile float dbg_friction_r_speed_ref;
+volatile float dbg_friction_r_speed_measure;
+volatile float friction_speed_ref;
 
 // 拨盘调参：Ozone把 loader_tuning 设为1进入，0恢复正常
 // loader_tune_loop: 0=电流环(直接给电流参考), 1=速度环(给速度参考)
@@ -228,6 +233,7 @@ void ShootTask()
     }
 
     // 确定是否开启摩擦轮,后续可能修改为键鼠模式下始终开启摩擦轮(上场时建议一直开启)
+    // 2026 ARCC Speed limits: 17mm 25m/s(45000-24m/s), 42mm 15m/s
     if (shoot_cmd_recv.friction_mode == FRICTION_ON)
     {
         // 根据收到的弹速设置设定摩擦轮电机参考值,需实测后填入
@@ -237,17 +243,13 @@ void ShootTask()
             DJIMotorSetRef(friction_l, 0);
             DJIMotorSetRef(friction_r, 0);
             break;
-        case SMALL_AMU_18:
-            DJIMotorSetRef(friction_l, 0);
-            DJIMotorSetRef(friction_r, 0);
+        case SMALL_AMU_25:
+            DJIMotorSetRef(friction_l, 45000);
+            DJIMotorSetRef(friction_r, 45000);
             break;
-        case SMALL_AMU_30:
-            DJIMotorSetRef(friction_l, 0);
-            DJIMotorSetRef(friction_r, 0);
-            break;
-        default: // 当前为了调试设定的默认值4000,因为还没有加入裁判系统无法读取弹速.
-            DJIMotorSetRef(friction_l, 4000);
-            DJIMotorSetRef(friction_r, 4000);
+        default:
+            DJIMotorSetRef(friction_l, 45000);
+            DJIMotorSetRef(friction_r, 45000);
             break;
         }
     }
@@ -273,6 +275,10 @@ void ShootTask()
     dbg_loader_speed_measure = loader->motor_controller.speed_PID.Measure;
     dbg_loader_angle_ref = loader->motor_controller.angle_PID.Ref;
     dbg_loader_angle_measure = loader->motor_controller.angle_PID.Measure;
+    dbg_friction_l_speed_ref = friction_l->motor_controller.speed_PID.Ref;
+    dbg_friction_l_speed_measure = friction_l->motor_controller.speed_PID.Measure;
+    dbg_friction_r_speed_ref = friction_r->motor_controller.speed_PID.Ref;
+    dbg_friction_r_speed_measure = friction_r->motor_controller.speed_PID.Measure;
 
     // 反馈数据,目前暂时没有要设定的反馈数据,后续可能增加应用离线监测以及卡弹反馈
     PubPushMessage(shoot_pub, (void *)&shoot_feedback_data);
