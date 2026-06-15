@@ -185,8 +185,8 @@ static void RemoteControlSet()
         shoot_cmd_send.load_mode = LOAD_BURSTFIRE;
     else
         shoot_cmd_send.load_mode = LOAD_STOP;
-    // 射频控制,固定每秒1发,后续可以根据左侧拨轮的值大小切换射频,
-    shoot_cmd_send.shoot_rate = 8;
+    // 射频控制,固定每秒1发,后续可以根据左侧拨轮的值大小切换射频,测试小于25Hz都稳定,大于未测试
+    shoot_cmd_send.shoot_rate = 25.0f;
 }
 
 /**
@@ -225,7 +225,6 @@ static void MouseKeySet()
         shoot_cmd_send.bullet_speed = 15;
         break;
     case 1:
-        shoot_cmd_send.bullet_speed = 18;
         break;
     default:
         shoot_cmd_send.bullet_speed = 30;
