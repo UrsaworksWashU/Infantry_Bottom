@@ -71,7 +71,7 @@ typedef enum
 	BIG_AMU_10 = 10,
 	SMALL_AMU_15 = 15,
 	BIG_AMU_16 = 16,
-	SMALL_AMU_18 = 18,
+	SMALL_AMU_25 = 25,
 	SMALL_AMU_30 = 30,
 } Bullet_Speed_e;
 

@@ -46,6 +46,8 @@ static Shoot_Upload_Data_s shoot_fetch_data; // 从发射获取的反馈信息
 
 static Robot_Status_e robot_state; // 机器人整体工作状态
 
+volatile float dbg_shoot_speed;
+
 BMI088Instance *bmi088_test; // 云台IMU
 BMI088_Data_t bmi088_data;
 void RobotCMDInit()
@@ -118,6 +120,7 @@ void RobotCMDInit()
     gimbal_cmd_send.pitch = 0;
 
     robot_state = ROBOT_READY; // 启动时机器人进入工作模式,后续加入所有应用初始化完成之后再进入
+    shoot_cmd_send.shoot_mode = SHOOT_ON; // 初始化即使能发射机构,飞轮由拨轮控制
 }
 
 /**
@@ -184,8 +187,8 @@ static void RemoteControlSet()
         shoot_cmd_send.load_mode = LOAD_BURSTFIRE;
     else
         shoot_cmd_send.load_mode = LOAD_STOP;
-    // 射频控制,固定每秒1发,后续可以根据左侧拨轮的值大小切换射频,
-    shoot_cmd_send.shoot_rate = 8;
+    // 射频控制,固定每秒1发,后续可以根据左侧拨轮的值大小切换射频,测试小于25Hz都稳定,大于未测试
+    shoot_cmd_send.shoot_rate = dbg_shoot_speed;
 }
 
 /**
@@ -227,7 +230,6 @@ static void MouseKeySet()
         shoot_cmd_send.bullet_speed = 15;
         break;
     case 1:
-        shoot_cmd_send.bullet_speed = 18;
         break;
     default:
         shoot_cmd_send.bullet_speed = 30;
