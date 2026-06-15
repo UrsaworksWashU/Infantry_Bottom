@@ -207,7 +207,19 @@ static void RemoteControlSet()
           gimbal_cmd_send.yaw   = gimbal_fetch_data.gimbal_imu_data.YawTotalAngle + err;
           gimbal_cmd_send.pitch = -vision_recv_data->pitch * 57.2958f;
       }
-  }
+        // 摩擦轮控制,拨轮向上打为负,向下为正
+        if (rc_data[TEMP].rc.dial < -100) // 向上超过100,打开摩擦轮
+            shoot_cmd_send.friction_mode = FRICTION_ON;
+        else
+            shoot_cmd_send.friction_mode = FRICTION_OFF;
+        // 拨弹控制,遥控器固定为一种拨弹模式,可自行选择
+        if (rc_data[TEMP].rc.dial < -500)
+            shoot_cmd_send.load_mode = LOAD_BURSTFIRE;
+        else
+            shoot_cmd_send.load_mode = LOAD_STOP;
+        // 射频控制,固定每秒1发,后续可以根据左侧拨轮的值大小切换射频,测试小于25Hz都稳定,大于未测试
+        shoot_cmd_send.shoot_rate = dbg_shoot_speed;
+        }
 
 /**
  * @brief 输入为键鼠时模式和控制量设置
