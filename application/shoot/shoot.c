@@ -47,6 +47,12 @@ volatile float   loader_cur_freq  = 1.0f;    // Hz，Ozone可实时改
 volatile float   loader_spd_amp   = 300.0f;  // 速度环阶跃幅值 deg/s，Ozone可实时改
 volatile float   loader_spd_freq  = 1.0f;    // Hz，Ozone可实时改
 
+// 卡弹处理有限状态机, 仿中科大Class_FSM_Anti_Jamming
+typedef enum { JAM_NORMAL = 0, JAM_SUSPECT, JAM_CONFIRM, JAM_PROCESSING } ShootJamStatus_e;
+static ShootJamStatus_e jam_status = JAM_NORMAL;
+static float jam_status_enter_time = 0; // ms, 进入当前状态的时刻
+volatile uint8_t dbg_jam_status;        // Ozone观察卡弹状态
+
 void ShootInit()
 {
     // 左摩擦轮
@@ -135,53 +141,50 @@ void ShootInit()
     shoot_sub = SubRegister("shoot_cmd", sizeof(Shoot_Ctrl_Cmd_s));
 }
 
-/* 机器人发射机构控制核心任务 */
-void ShootTask()
+/**
+ * @brief 卡弹处理有限状态机, 仿中科大Class_FSM_Anti_Jamming::TIM_1ms_Calculate_PeriodElapsedCallback
+ * @note  正常/嫌疑态由外部执行正常发射输出; 确认/处理态在此接管拨盘进行回拨
+ */
+static void ShootJamSetStatus(ShootJamStatus_e s)
 {
-    // 从cmd获取控制数据
-    SubGetMessage(shoot_sub, &shoot_cmd_recv);
+    jam_status = s;
+    jam_status_enter_time = DWT_GetTimeline_ms();
+}
 
-    // === 拨盘电流环/速度环阶跃调参 ===
-    // Ozone把 loader_tuning 设为1进入，0恢复正常
-    // 调电流环: loader_tune_loop=0；调速度环: loader_tune_loop=1
-    // 用方波给阶跃，观察 dbg_loader_*_ref / dbg_loader_*_measure 跟随情况
-    if (loader_tuning)
+static void ShootJamFSM(void)
+{
+    float elapsed = DWT_GetTimeline_ms() - jam_status_enter_time;
+    float cur = fabsf((float)loader->measure.real_current); // 绝对值, 不依赖拨盘方向
+    switch (jam_status)
     {
-        // 安全: 调拨盘时强制停摩擦轮
-        DJIMotorStop(friction_l);
-        DJIMotorStop(friction_r);
-        DJIMotorEnable(loader);
-
-        float t = DWT_GetTimeline_s();
-
-        if (loader_tune_loop == 0)
-        {
-            // 电流环: 外环切到CURRENT_LOOP, SetRef直接是电流参考
-            DJIMotorOuterLoop(loader, CURRENT_LOOP);
-            float half = 0.5f / loader_cur_freq;
-            float ref  = (fmodf(t, 2.0f * half) < half) ? loader_cur_amp : -loader_cur_amp;
-            DJIMotorSetRef(loader, ref);
-        }
-        else
-        {
-            // 速度环: 外环切到SPEED_LOOP, SetRef是速度参考(deg/s)
-            DJIMotorOuterLoop(loader, SPEED_LOOP);
-            float half = 0.5f / loader_spd_freq;
-            float ref  = (fmodf(t, 2.0f * half) < half) ? loader_spd_amp : -loader_spd_amp;
-            DJIMotorSetRef(loader, ref);
-        }
-
-        dbg_loader_current_ref     = loader->motor_controller.current_PID.Ref;
-        dbg_loader_current_measure = loader->motor_controller.current_PID.Measure;
-        dbg_loader_speed_ref       = loader->motor_controller.speed_PID.Ref;
-        dbg_loader_speed_measure   = loader->motor_controller.speed_PID.Measure;
-        dbg_loader_angle_ref       = loader->motor_controller.angle_PID.Ref;
-        dbg_loader_angle_measure   = loader->motor_controller.angle_PID.Measure;
-
-        PubPushMessage(shoot_pub, (void *)&shoot_feedback_data);
-        return;
+    case JAM_NORMAL:
+        // 大扭矩 -> 卡弹嫌疑状态
+        if (cur >= JAM_CURRENT_THRESHOLD)
+            ShootJamSetStatus(JAM_SUSPECT);
+        break;
+    case JAM_SUSPECT:
+        if (elapsed >= JAM_SUSPECT_TIME_MS)
+            ShootJamSetStatus(JAM_CONFIRM); // 长时间大扭矩 -> 卡弹反应状态
+        else if (cur < JAM_CURRENT_THRESHOLD)
+            ShootJamSetStatus(JAM_NORMAL); // 短时间大扭矩 -> 正常状态
+        break;
+    case JAM_CONFIRM:
+        // 卡弹反应状态 -> 准备卡弹处理: 切到角度环回拨
+        DJIMotorOuterLoop(loader, ANGLE_LOOP);
+        DJIMotorSetRef(loader, loader->measure.total_angle - JAM_BACK_ANGLE);
+        ShootJamSetStatus(JAM_PROCESSING);
+        break;
+    case JAM_PROCESSING:
+        // 卡弹处理状态: 长时间回拨 -> 正常状态
+        if (elapsed >= JAM_SOLVING_TIME_MS)
+            ShootJamSetStatus(JAM_NORMAL);
+        break;
     }
+}
 
+/* 发射输出逻辑(原ShootTask主体, 内容不变), 仅在卡弹状态机正常/嫌疑态时执行 */
+static void ShootOutput()
+{
     // 对shoot mode等于SHOOT_STOP的情况特殊处理,直接停止所有电机(紧急停止)
     if (shoot_cmd_recv.shoot_mode == SHOOT_OFF)
     {
@@ -303,7 +306,66 @@ void ShootTask()
     {
         //...
     }
+}
 
+/* 机器人发射机构控制核心任务 */
+void ShootTask()
+{
+    // 从cmd获取控制数据
+    SubGetMessage(shoot_sub, &shoot_cmd_recv);
+
+    // === 拨盘电流环/速度环阶跃调参 ===
+    // Ozone把 loader_tuning 设为1进入，0恢复正常
+    // 调电流环: loader_tune_loop=0；调速度环: loader_tune_loop=1
+    // 用方波给阶跃，观察 dbg_loader_*_ref / dbg_loader_*_measure 跟随情况
+    if (loader_tuning)
+    {
+        // 安全: 调拨盘时强制停摩擦轮
+        DJIMotorStop(friction_l);
+        DJIMotorStop(friction_r);
+        DJIMotorEnable(loader);
+
+        float t = DWT_GetTimeline_s();
+
+        if (loader_tune_loop == 0)
+        {
+            // 电流环: 外环切到CURRENT_LOOP, SetRef直接是电流参考
+            DJIMotorOuterLoop(loader, CURRENT_LOOP);
+            float half = 0.5f / loader_cur_freq;
+            float ref  = (fmodf(t, 2.0f * half) < half) ? loader_cur_amp : -loader_cur_amp;
+            DJIMotorSetRef(loader, ref);
+        }
+        else
+        {
+            // 速度环: 外环切到SPEED_LOOP, SetRef是速度参考(deg/s)
+            DJIMotorOuterLoop(loader, SPEED_LOOP);
+            float half = 0.5f / loader_spd_freq;
+            float ref  = (fmodf(t, 2.0f * half) < half) ? loader_spd_amp : -loader_spd_amp;
+            DJIMotorSetRef(loader, ref);
+        }
+
+        dbg_loader_current_ref     = loader->motor_controller.current_PID.Ref;
+        dbg_loader_current_measure = loader->motor_controller.current_PID.Measure;
+        dbg_loader_speed_ref       = loader->motor_controller.speed_PID.Ref;
+        dbg_loader_speed_measure   = loader->motor_controller.speed_PID.Measure;
+        dbg_loader_angle_ref       = loader->motor_controller.angle_PID.Ref;
+        dbg_loader_angle_measure   = loader->motor_controller.angle_PID.Measure;
+
+        PubPushMessage(shoot_pub, (void *)&shoot_feedback_data);
+        return;
+    }
+
+    // 急停时复位状态机, 保证 ShootOutput() 执行真正停机, FSM 不在急停期间劫持拨盘 (安全保护)
+    if (shoot_cmd_recv.shoot_mode == SHOOT_OFF)
+        ShootJamSetStatus(JAM_NORMAL);
+
+    // 卡弹处理状态机: 仿中科大Class_Booster
+    // 正常/嫌疑态执行正常发射输出; 确认/处理态由FSM接管拨盘回拨, 摩擦轮保持上次转速
+    ShootJamFSM();
+    if (jam_status == JAM_NORMAL || jam_status == JAM_SUSPECT)
+        ShootOutput();
+
+    dbg_jam_status = (uint8_t)jam_status;
     dbg_loader_current_ref = loader->motor_controller.current_PID.Ref;
     dbg_loader_current_measure = loader->motor_controller.current_PID.Measure;
     dbg_loader_speed_ref = loader->motor_controller.speed_PID.Ref;
