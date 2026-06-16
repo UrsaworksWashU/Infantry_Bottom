@@ -194,6 +194,7 @@ static void RemoteControlSet()
   static void VisionControlSet()
   {
       gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
+      chassis_cmd_send.chassis_mode = CHASSIS_NO_FOLLOW; 
       if (vision_recv_data->target_state != NO_TARGET)
       {
           float target_yaw = vision_recv_data->yaw * 57.2958f;   // absolute, (-180,180] deg
@@ -209,7 +210,7 @@ static void RemoteControlSet()
         else
             shoot_cmd_send.friction_mode = FRICTION_OFF;
         // 拨弹控制,遥控器固定为一种拨弹模式,可自行选择
-        if (rc_data[TEMP].rc.dial < -500)
+        if (rc_data[TEMP].rc.dial < -500 && vision_recv_data->target_state == READY_TO_FIRE)
             shoot_cmd_send.load_mode = LOAD_BURSTFIRE;
         else
             shoot_cmd_send.load_mode = LOAD_STOP;
