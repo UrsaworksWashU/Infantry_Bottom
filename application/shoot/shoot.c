@@ -5,6 +5,7 @@
 #include "message_center.h"
 #include "bsp_dwt.h"
 #include "general_def.h"
+#include "rm_referee.h"
 #include <math.h>
 
 /* 对于双发射机构的机器人,将下面的数据封装成结构体即可,生成两份shoot应用实例 */
@@ -16,8 +17,13 @@ static Shoot_Ctrl_Cmd_s shoot_cmd_recv; // 来自cmd的发射控制信息
 static Subscriber_t *shoot_sub;
 static Shoot_Upload_Data_s shoot_feedback_data; // 来自cmd的发射控制信息
 
+static referee_info_t *referee_data; // 裁判系统数据,用于读取枪口热量
+
 // dwt定时,计算冷却用
 static float hibernate_time = 0, dead_time = 0;
+
+// 连发目标射频(发/秒),仿中科大Target_Ammo_Shoot_Frequency,默认用此速度,可Ozone实时调
+static float target_ammo_shoot_frequency = 10.0f;
 
 volatile float dbg_loader_current_ref;
 volatile float dbg_loader_current_measure;
@@ -123,6 +129,8 @@ void ShootInit()
     };
     loader = DJIMotorInit(&loader_config);
 
+    referee_data = RefereeGetInfo(); // 获取裁判系统数据指针(串口由UI/chassis初始化,此处仅取指针)
+
     shoot_pub = PubRegister("shoot_feed", sizeof(Shoot_Upload_Data_s));
     shoot_sub = SubRegister("shoot_cmd", sizeof(Shoot_Ctrl_Cmd_s));
 }
@@ -215,12 +223,39 @@ void ShootTask()
         hibernate_time = DWT_GetTimeline_ms();                                                  // 记录触发指令的时间
         dead_time = 300;                                                                        // 完成3发弹丸发射的时间
         break;
-    // 连发模式,对速度闭环,射频后续修改为可变,目前固定为1Hz
+    // 连发模式,对速度闭环,根据枪口剩余热量(barrel heat余量)动态选择拨弹射频
+    // 仿中科大开源步兵Booster_Control_Type_AUTO热量控制逻辑:
+    //   余量充足时全速发射;余量进入缓冲区后在目标射频与可持续射频(冷却速率)之间线性过渡;余量过低时停火
     case LOAD_BURSTFIRE:
+    {
         DJIMotorOuterLoop(loader, SPEED_LOOP);
-        DJIMotorSetRef(loader, shoot_cmd_recv.shoot_rate * 360 * REDUCTION_RATIO_LOADER / NUM_PER_CIRCLE); // 设定为每秒shoot_rate发,需要换算成角速度,注意REDUCTION_RATIO_LOADER
+
+        // 剩余热量 = 热量上限 - 当前17mm枪口热量 (= 中科大tmp_delta)
+        float heat_remain = (float)(referee_data->GameRobotState.shooter_barrel_heat_limit - referee_data->PowerHeatData.shooter_17mm_barrel_heat);
+        float now_rate;
+
+        if (heat_remain >= HEAT_SLOWDOWN_THRESHOLD)
+        {
+            // 余量充足,全速发射
+            now_rate = target_ammo_shoot_frequency;
+        }
+        else if (heat_remain >= HEAT_CEASEFIRE_THRESHOLD)
+        {
+            // 余量降低,在目标射频与可持续射频(冷却速率/每发热量)之间线性过渡
+            // 余量=SLOWDOWN阈值时为target,余量=CEASEFIRE阈值时为冷却对应的可持续射频
+            float sustain = (float)referee_data->GameRobotState.shooter_barrel_cooling_value / HEAT_PER_BULLET;
+            now_rate = (target_ammo_shoot_frequency * (HEAT_CEASEFIRE_THRESHOLD - heat_remain) + sustain * (heat_remain - HEAT_SLOWDOWN_THRESHOLD)) / (HEAT_CEASEFIRE_THRESHOLD - HEAT_SLOWDOWN_THRESHOLD);
+        }
+        else
+        {
+            // 余量不足,停火
+            now_rate = 0.0f;
+        }
+
         // x颗/秒换算成速度: 已知一圈的载弹量,由此计算出1s需要转的角度,注意换算角速度(DJIMotor的速度单位是angle per second)
+        DJIMotorSetRef(loader, now_rate * 360 * REDUCTION_RATIO_LOADER / NUM_PER_CIRCLE);
         break;
+    }
     // 拨盘反转,对速度闭环,后续增加卡弹检测(通过裁判系统剩余热量反馈和电机电流)
     // 也有可能需要从switch-case中独立出来
     case LOAD_REVERSE:

@@ -87,6 +87,13 @@ typedef struct
 referee_info_t *RefereeInit(UART_HandleTypeDef *referee_usart_handle);
 
 /**
+ * @brief 获取已初始化的裁判系统数据指针(不重新初始化串口)
+ * @note  供其他应用读取热量等数据使用,避免重复注册串口导致冲突
+ * @return referee_info_t* 裁判系统数据指针
+ */
+referee_info_t *RefereeGetInfo(void);
+
+/**
  * @brief UI绘制和交互数的发送接口,由UI绘制任务和多机通信函数调用
  * @note 内部包含了一个实时系统的延时函数,这是因为裁判系统接收CMD数据至高位10Hz
  *
