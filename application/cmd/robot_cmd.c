@@ -222,12 +222,14 @@ static void RemoteControlSet()
  */
 static void MouseKeySet()
 {
-    chassis_cmd_send.vx = rc_data[TEMP].key[KEY_PRESS].w * 300 - rc_data[TEMP].key[KEY_PRESS].s * 300; // 系数待测
-    chassis_cmd_send.vy = rc_data[TEMP].key[KEY_PRESS].s * 300 - rc_data[TEMP].key[KEY_PRESS].d * 300;
-
     gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
-    gimbal_cmd_send.yaw   +=  (float)rc_data[TEMP].mouse.x * 0.005f;
-    gimbal_cmd_send.pitch += -(float)rc_data[TEMP].mouse.y * 0.001f;
+    chassis_cmd_send.chassis_mode = CHASSIS_FOLLOW_GIMBAL_YAW;
+
+    chassis_cmd_send.vx = 300.0f * (float)rc_data[TEMP].key[KEY_PRESS].w - 300.0f * (float)rc_data[TEMP].key[KEY_PRESS].s; // 系数待测
+    chassis_cmd_send.vy = 300.0f * (float)rc_data[TEMP].key[KEY_PRESS].d - 300.0f * (float)rc_data[TEMP].key[KEY_PRESS].a;
+
+    gimbal_cmd_send.yaw   += -(float)rc_data[TEMP].mouse.x * 0.005f;
+    gimbal_cmd_send.pitch +=  (float)rc_data[TEMP].mouse.y * 0.001f;
     if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
     if (gimbal_cmd_send.pitch < PITCH_MIN_ANGLE) gimbal_cmd_send.pitch = PITCH_MIN_ANGLE;
 
