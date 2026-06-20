@@ -143,7 +143,7 @@ static void RobotModeTest(Referee_Interactive_info_t *_Interactive_data) // 测�
     }
     case 1:
     {
-        _Interactive_data->chassis_mode = CHASSIS_ROTATE;
+        _Interactive_data->chassis_mode = CHASSIS_ROTATE_CLOCKWISE;
         _Interactive_data->gimbal_mode = GIMBAL_FREE_MODE;
         _Interactive_data->shoot_mode = SHOOT_OFF;
         _Interactive_data->friction_mode = FRICTION_OFF;
@@ -184,7 +184,11 @@ static void MyUIRefresh(referee_info_t *referee_recv_info, Referee_Interactive_i
         case CHASSIS_ZERO_FORCE:
             UICharDraw(&UI_State_dyn[0], "sd0", UI_Graph_Change, 8, UI_Color_Main, 15, 2, 270, 750, "zeroforce");
             break;
-        case CHASSIS_ROTATE:
+        case CHASSIS_ROTATE_CLOCKWISE:
+            UICharDraw(&UI_State_dyn[0], "sd0", UI_Graph_Change, 8, UI_Color_Main, 15, 2, 270, 750, "rotate   ");
+            // 此处注意字数对齐问题，字数相同才能覆盖掉
+            break;
+        case CHASSIS_ROTATE_COUNTERCLOCKWISE:
             UICharDraw(&UI_State_dyn[0], "sd0", UI_Graph_Change, 8, UI_Color_Main, 15, 2, 270, 750, "rotate   ");
             // 此处注意字数对齐问题，字数相同才能覆盖掉
             break;

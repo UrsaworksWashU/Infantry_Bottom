@@ -246,7 +246,10 @@ void ChassisTask()
         chassis_cmd_recv.wz = -PIDCalculate(&chassis_follow_PID, chassis_cmd_recv.offset_angle, 0.0f); 
         // wz has opposite direction with offset_angle, so opposite sign for output
         break;
-    case CHASSIS_ROTATE: // 自旋,同时保持全向机动;当前wz维持定值,后续增加不规则的变速策略
+    case CHASSIS_ROTATE_CLOCKWISE: // 自旋,同时保持全向机动;当前wz维持定值,后续增加不规则的变速策略
+        chassis_cmd_recv.wz = -1000;
+        break;
+    case CHASSIS_ROTATE_COUNTERCLOCKWISE: // 自旋,同时保持全向机动;当前wz维持定值,后续增加不规则的变速策略
         chassis_cmd_recv.wz = 1000;
         break;
     default:

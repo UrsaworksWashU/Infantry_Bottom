@@ -145,7 +145,7 @@ static void RemoteControlSet()
     // When right switch is down, gimbal in angle mode and chassis in rotation mode
     if (switch_is_down(rc_data[TEMP].rc.switch_right)) 
     {
-        chassis_cmd_send.chassis_mode = CHASSIS_ROTATE;
+        chassis_cmd_send.chassis_mode = CHASSIS_ROTATE_CLOCKWISE;
         gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
     }
     // When right switch is mid, gimbal in angle mode and chassis follow gimbal yaw
@@ -225,8 +225,21 @@ static void MouseKeySet()
     gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
     chassis_cmd_send.chassis_mode = CHASSIS_FOLLOW_GIMBAL_YAW;
 
-    chassis_cmd_send.vx = 300.0f * (float)rc_data[TEMP].key[KEY_PRESS].w - 300.0f * (float)rc_data[TEMP].key[KEY_PRESS].s; // 系数待测
-    chassis_cmd_send.vy = 300.0f * (float)rc_data[TEMP].key[KEY_PRESS].d - 300.0f * (float)rc_data[TEMP].key[KEY_PRESS].a;
+    chassis_cmd_send.vx = 1000.0f * (float)rc_data[TEMP].key[KEY_PRESS].w - 1000.0f * (float)rc_data[TEMP].key[KEY_PRESS].s; // 系数待测
+    chassis_cmd_send.vy = 1000.0f * (float)rc_data[TEMP].key[KEY_PRESS].d - 1000.0f * (float)rc_data[TEMP].key[KEY_PRESS].a;
+
+    if (rc_data[TEMP].key[KEY_PRESS].q) 
+    {
+        chassis_cmd_send.chassis_mode = CHASSIS_ROTATE_COUNTERCLOCKWISE;
+    }
+    else if (rc_data[TEMP].key[KEY_PRESS].e)
+    {
+        chassis_cmd_send.chassis_mode = CHASSIS_ROTATE_CLOCKWISE;
+    }
+    else
+    {
+        chassis_cmd_send.chassis_mode = CHASSIS_FOLLOW_GIMBAL_YAW;
+    }
 
     gimbal_cmd_send.yaw   += -(float)rc_data[TEMP].mouse.x * 0.005f;
     gimbal_cmd_send.pitch +=  (float)rc_data[TEMP].mouse.y * 0.001f;
