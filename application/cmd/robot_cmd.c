@@ -118,7 +118,7 @@ void RobotCMDInit()
     gimbal_cmd_send.pitch = 0;
 
     robot_state = ROBOT_READY; // 启动时机器人进入工作模式,后续加入所有应用初始化完成之后再进入
-    shoot_cmd_send.shoot_mode = SHOOT_ON; // 初始化即使能发射机构,飞轮由拨轮控制
+    shoot_cmd_send.shoot_state = BOOSTER_DISABLE; // 上电默认失能,第一次触发单发/连发后才激活
 }
 
 /**
@@ -175,16 +175,13 @@ static void RemoteControlSet()
     else
         ; // 弹舱舵机控制,待添加servo_motor模块,关闭
 
-    // 摩擦轮控制,拨轮向上打为负,向下为正
-    if (rc_data[TEMP].rc.dial < -100) // 向上超过100,打开摩擦轮
-        shoot_cmd_send.friction_mode = FRICTION_ON;
-    else
-        shoot_cmd_send.friction_mode = FRICTION_OFF;
-    // 拨弹控制,遥控器固定为一种拨弹模式,可自行选择
-    if (rc_data[TEMP].rc.dial < -500)
-        shoot_cmd_send.load_mode = LOAD_BURSTFIRE;
-    else
-        shoot_cmd_send.load_mode = LOAD_STOP;
+    // 发射机构状态控制(拨轮向上打为负): 回中失能, 上拨过半停火(飞轮常转), 上拨到底连发
+    if (rc_data[TEMP].rc.dial < -500) // 上拨到底: 连发
+        shoot_cmd_send.shoot_state = BOOSTER_AUTO;
+    else if (rc_data[TEMP].rc.dial < 100) // 上拨过半: 飞轮常转,不发弹
+        shoot_cmd_send.shoot_state = BOOSTER_CEASEFIRE;
+    else // 回中: 失能,飞轮停
+        shoot_cmd_send.shoot_state = BOOSTER_DISABLE;
 }
 
 /**
@@ -204,16 +201,13 @@ static void RemoteControlSet()
           gimbal_cmd_send.yaw   = gimbal_fetch_data.gimbal_imu_data.YawTotalAngle + err;
           gimbal_cmd_send.pitch = -vision_recv_data->pitch * 57.2958f;
       }
-        // 摩擦轮控制,拨轮向上打为负,向下为正
-        if (rc_data[TEMP].rc.dial < -100) // 向上超过100,打开摩擦轮
-            shoot_cmd_send.friction_mode = FRICTION_ON;
-        else
-            shoot_cmd_send.friction_mode = FRICTION_OFF;
-        // 拨弹控制,遥控器固定为一种拨弹模式,可自行选择
+        // 发射机构状态控制(拨轮向上打为负): 上拨到底且视觉判定可开火->连发, 上拨过半->飞轮常转待发, 回中->失能
         if (rc_data[TEMP].rc.dial < -500 && vision_recv_data->target_state == READY_TO_FIRE)
-            shoot_cmd_send.load_mode = LOAD_BURSTFIRE;
+            shoot_cmd_send.shoot_state = BOOSTER_AUTO;
+        else if (rc_data[TEMP].rc.dial < -100)
+            shoot_cmd_send.shoot_state = BOOSTER_CEASEFIRE;
         else
-            shoot_cmd_send.load_mode = LOAD_STOP;
+            shoot_cmd_send.shoot_state = BOOSTER_DISABLE;
         }
 
 /**
@@ -246,75 +240,87 @@ static void MouseKeySet()
     if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
     if (gimbal_cmd_send.pitch < PITCH_MIN_ANGLE) gimbal_cmd_send.pitch = PITCH_MIN_ANGLE;
 
-    switch (rc_data[TEMP].key_count[KEY_PRESS][Key_Z] % 3) // Z键设置弹速
-    {
-    case 0:
-        shoot_cmd_send.bullet_speed = 15;
-        break;
-    case 1:
-        break;
-    default:
-        shoot_cmd_send.bullet_speed = 30;
-        break;
-    }
-    switch (rc_data[TEMP].key_count[KEY_PRESS][Key_E] % 4) // E键设置发射模式
-    {
-    case 0:
-        shoot_cmd_send.load_mode = LOAD_STOP;
-        break;
-    case 1:
-        shoot_cmd_send.load_mode = LOAD_1_BULLET;
-        break;
-    case 2:
-        shoot_cmd_send.load_mode = LOAD_3_BULLET;
-        break;
-    default:
-        shoot_cmd_send.load_mode = LOAD_BURSTFIRE;
-        break;
-    }
-    switch (rc_data[TEMP].key_count[KEY_PRESS][Key_R] % 2) // R键开关弹舱
-    {
-    case 0:
-        shoot_cmd_send.lid_mode = LID_OPEN;
-        break;
-    default:
-        shoot_cmd_send.lid_mode = LID_CLOSE;
-        break;
-    }
-    switch (rc_data[TEMP].key_count[KEY_PRESS][Key_F] % 2) // F键开关摩擦轮
-    {
-    case 0:
-        shoot_cmd_send.friction_mode = FRICTION_OFF;
-        break;
-    default:
-        shoot_cmd_send.friction_mode = FRICTION_ON;
-        break;
-    }
-    switch (rc_data[TEMP].key_count[KEY_PRESS][Key_C] % 4) // C键设置底盘速度
-    {
-    case 0:
-        chassis_cmd_send.chassis_speed_buff = 40;
-        break;
-    case 1:
-        chassis_cmd_send.chassis_speed_buff = 60;
-        break;
-    case 2:
-        chassis_cmd_send.chassis_speed_buff = 80;
-        break;
-    default:
-        chassis_cmd_send.chassis_speed_buff = 100;
-        break;
-    }
-    switch (rc_data[TEMP].key[KEY_PRESS].shift) // 待添加 按shift允许超功率 消耗缓冲能量
-    {
-    case 1:
+    // switch (rc_data[TEMP].key_count[KEY_PRESS][Key_Z] % 3) // Z键设置弹速
+    // {
+    // case 0:
+    //     shoot_cmd_send.bullet_speed = 15;
+    //     break;
+    // case 1:
+    //     break;
+    // default:
+    //     shoot_cmd_send.bullet_speed = 30;
+    //     break;
+    // }
+    // 鼠标左键发射控制(直接驱动发射机构状态机,仅保留长按连发,无单发):
+    //   按住超过HOLD_TO_BURST_TIME_MS->BOOSTER_AUTO连发
+    //   未达长按阈值/已松开->BOOSTER_CEASEFIRE停火(飞轮保持转,首次连发前仍保持失能)
+    static uint8_t mouse_l_last      = 0; // 上一帧左键状态,用于检测上升沿(记录按下时刻)
+    static float   mouse_l_press_ms  = 0; // 左键按下的时刻
+    uint8_t mouse_l_now = rc_data[TEMP].mouse.press_l;
+    float   now_ms      = DWT_GetTimeline_ms();
 
-        break;
+    if (mouse_l_now && !mouse_l_last) // 刚按下:记录按下时刻,用于长按判定
+        mouse_l_press_ms = now_ms;
 
-    default:
-
-        break;
+    if (mouse_l_now && (now_ms - mouse_l_press_ms >= HOLD_TO_BURST_TIME_MS)) // 长按:连发
+    {
+        shoot_cmd_send.shoot_state = BOOSTER_AUTO;
     }
+    else // 未达长按阈值,或已松开:已激活过才进停火,否则保持上电失能态
+    {
+        if (shoot_cmd_send.shoot_state != BOOSTER_DISABLE)
+            shoot_cmd_send.shoot_state = BOOSTER_CEASEFIRE;
+    }
+    mouse_l_last = mouse_l_now;
+
+    if (rc_data[TEMP].key[KEY_PRESS].f) // F键:手动失能发射机构(停飞轮),需重新点击鼠标才再次激活
+    {
+        shoot_cmd_send.shoot_state = BOOSTER_DISABLE;
+    }
+
+    // switch (rc_data[TEMP].key_count[KEY_PRESS][Key_R] % 2) // R键开关弹舱
+    // {
+    // case 0:
+    //     shoot_cmd_send.lid_mode = LID_OPEN;
+    //     break;
+    // default:
+    //     shoot_cmd_send.lid_mode = LID_CLOSE;
+    //     break;
+    // }
+    // switch (rc_data[TEMP].key_count[KEY_PRESS][Key_F] % 2) // F键开关摩擦轮
+    // {
+    // case 0:
+    //     shoot_cmd_send.friction_mode = FRICTION_OFF;
+    //     break;
+    // default:
+    //     shoot_cmd_send.friction_mode = FRICTION_ON;
+    //     break;
+    // }
+    // switch (rc_data[TEMP].key_count[KEY_PRESS][Key_C] % 4) // C键设置底盘速度
+    // {
+    // case 0:
+    //     chassis_cmd_send.chassis_speed_buff = 40;
+    //     break;
+    // case 1:
+    //     chassis_cmd_send.chassis_speed_buff = 60;
+    //     break;
+    // case 2:
+    //     chassis_cmd_send.chassis_speed_buff = 80;
+    //     break;
+    // default:
+    //     chassis_cmd_send.chassis_speed_buff = 100;
+    //     break;
+    // }
+    // switch (rc_data[TEMP].key[KEY_PRESS].shift) // 待添加 按shift允许超功率 消耗缓冲能量
+    // {
+    // case 1:
+
+    //     break;
+
+    // default:
+
+    //     break;
+    // }
 }
 
 /**
@@ -332,16 +338,13 @@ static void EmergencyHandler()
         robot_state = ROBOT_STOP;
         gimbal_cmd_send.gimbal_mode = GIMBAL_ZERO_FORCE;
         chassis_cmd_send.chassis_mode = CHASSIS_ZERO_FORCE;
-        shoot_cmd_send.shoot_mode = SHOOT_OFF;
-        shoot_cmd_send.friction_mode = FRICTION_OFF;
-        shoot_cmd_send.load_mode = LOAD_STOP;
+        shoot_cmd_send.shoot_state = BOOSTER_DISABLE; // 急停:发射机构失能(含飞轮)
         LOGERROR("[CMD] emergency stop!");
     }
-    // 遥控器右侧开关为[上],恢复正常运行
+    // 遥控器右侧开关为[上],恢复正常运行(发射机构状态由各输入处理函数决定,不在此强制使能)
     if (switch_is_up(rc_data[TEMP].rc.switch_right))
     {
         robot_state = ROBOT_READY;
-        shoot_cmd_send.shoot_mode = SHOOT_ON;
         LOGINFO("[CMD] reinstate, robot ready");
     }
 }

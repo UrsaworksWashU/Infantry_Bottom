@@ -53,6 +53,10 @@ static ShootJamStatus_e jam_status = JAM_NORMAL;
 static float jam_status_enter_time = 0; // ms, 进入当前状态的时刻
 volatile uint8_t dbg_jam_status;        // Ozone观察卡弹状态
 
+// 发射机构状态由cmd经 shoot_cmd_recv.shoot_state 直接给定(robot_def.h: shoot_state_e),
+// 仿中科大Booster_Control_Type, 单一状态机, shoot层不再维护内部状态
+volatile uint8_t dbg_booster_type; // Ozone 观察发射机构状态(= shoot_cmd_recv.shoot_state)
+
 void ShootInit()
 {
     // 左摩擦轮
@@ -103,7 +107,7 @@ void ShootInit()
         .controller_param_init_config = {
             .angle_PID = {
                 // 如果启用位置环来控制发弹,需要较大的I值保证输出力矩的线性度否则出现接近拨出的力矩大幅下降
-                .Kp = 0, // 10
+                .Kp = 10, // 10
                 .Ki = 0,
                 .Kd = 0,
                 .MaxOut = 200,
@@ -182,54 +186,75 @@ static void ShootJamFSM(void)
     }
 }
 
-/* 发射输出逻辑(原ShootTask主体, 内容不变), 仅在卡弹状态机正常/嫌疑态时执行 */
+/* 摩擦轮(飞轮)输出: 仿中科大,在停火/单发/连发态常转,根据弹速设定转速 */
+// 2026 ARCC Speed limits: 17mm 25m/s(45000-24m/s), 42mm 15m/s
+static void FrictionOutput()
+{
+    // 根据收到的弹速设置设定摩擦轮电机参考值,需实测后填入
+    switch (shoot_cmd_recv.bullet_speed)
+    {
+    case SMALL_AMU_15:
+        DJIMotorSetRef(friction_l, 0);
+        DJIMotorSetRef(friction_r, 0);
+        break;
+    case SMALL_AMU_25:
+        DJIMotorSetRef(friction_l, 45000);
+        DJIMotorSetRef(friction_r, 45000);
+        break;
+    default:
+        DJIMotorSetRef(friction_l, 45000);
+        DJIMotorSetRef(friction_r, 45000);
+        break;
+    }
+}
+
+/* 发射输出逻辑, 仅在卡弹状态机正常/嫌疑态时执行
+ * 仿中科大Class_Booster::Output(): 按发射机构状态shoot_cmd_recv.shoot_state分四种模式 */
 static void ShootOutput()
 {
-    // 对shoot mode等于SHOOT_STOP的情况特殊处理,直接停止所有电机(紧急停止)
-    if (shoot_cmd_recv.shoot_mode == SHOOT_OFF)
+    // 失能: 上电默认/急停, 不真正停机, 而是给零参考(仿中科大DISABLE)
+    //   拨盘走电流环参考0(零电流), 两摩擦轮走速度环参考0
+    if (shoot_cmd_recv.shoot_state == BOOSTER_DISABLE)
     {
-        DJIMotorStop(friction_l);
-        DJIMotorStop(friction_r);
-        DJIMotorStop(loader);
-    }
-    else // 恢复运行
-    {
-        DJIMotorEnable(friction_l);
-        DJIMotorEnable(friction_r);
-        DJIMotorEnable(loader);
+        DJIMotorOuterLoop(loader, CURRENT_LOOP);
+        DJIMotorSetRef(loader, 0);
+        DJIMotorOuterLoop(friction_l, SPEED_LOOP);
+        DJIMotorOuterLoop(friction_r, SPEED_LOOP);
+        DJIMotorSetRef(friction_l, 0);
+        DJIMotorSetRef(friction_r, 0);
+        return; // 失能态不再设定其它参考值
     }
 
-    // 如果上一次触发单发或3发指令的时间加上不应期仍然大于当前时间(尚未休眠完毕),直接返回即可
-    // 单发模式主要提供给能量机关激活使用(以及英雄的射击大部分处于单发)
-    // if (hibernate_time + dead_time > DWT_GetTimeline_ms())
-    //     return;
+    // 飞轮常转(非失能态), 飞轮一直在转
+    FrictionOutput();
 
-    // 若不在休眠状态,根据robotCMD传来的控制模式进行拨盘电机参考值设定和模式切换
-    switch (shoot_cmd_recv.load_mode)
+    // 如果上一次触发单发指令的时间加上不应期仍然大于当前时间(尚未休眠完毕),直接返回即可
+    // 不应期内忽略后续状态切换(例如触发单发后立即回停火),保证拨盘走完一发弹丸的角度
+    if (hibernate_time + dead_time > DWT_GetTimeline_ms())
+        return;
+
+    // 拨盘控制: 按发射机构状态进行参考值设定
+    switch (shoot_cmd_recv.shoot_state)
     {
-    // 停止拨盘
-    case LOAD_STOP:
+    // 停火: 拨盘停在原地(速度环参考0,停得最快), 飞轮保持转动
+    case BOOSTER_CEASEFIRE:
         DJIMotorOuterLoop(loader, SPEED_LOOP); // 切换到速度环
         DJIMotorSetRef(loader, 0);             // 同时设定参考值为0,这样停止的速度最快
         break;
-    // 单发模式,根据鼠标按下的时间,触发一次之后需要进入不响应输入的状态(否则按下的时间内可能多次进入,导致多次发射)
-    case LOAD_1_BULLET:                                                                     // 激活能量机关/干扰对方用,英雄用.
-        DJIMotorOuterLoop(loader, ANGLE_LOOP);                                              // 切换到角度环
-        DJIMotorSetRef(loader, loader->measure.total_angle + ONE_BULLET_DELTA_ANGLE); // 控制量增加一发弹丸的角度
-        hibernate_time = DWT_GetTimeline_ms();                                              // 记录触发指令的时间
-        dead_time = 150;                                                                    // 完成1发弹丸发射的时间
+
+    // 单发: 角度环走一发弹丸的角度,触发后进入不响应输入的休眠期(150ms内忽略重复触发,保证只发一颗)
+    // 单发后回到停火由cmd负责(鼠标上升沿发SPOT一帧,之后即CEASEFIRE)
+    case BOOSTER_SPOT:
+        DJIMotorOuterLoop(loader, ANGLE_LOOP);                                       // 切换到角度环
+        DJIMotorSetRef(loader, loader->measure.total_angle - ONE_BULLET_DELTA_ANGLE); // 控制量增加一发弹丸的角度
+        hibernate_time = DWT_GetTimeline_ms();                                        // 记录触发指令的时间
+        dead_time = 150;                                                              // 完成1发弹丸发射的时间
         break;
-    // 三连发,如果不需要后续可能删除
-    case LOAD_3_BULLET:
-        DJIMotorOuterLoop(loader, ANGLE_LOOP);                                                  // 切换到速度环
-        DJIMotorSetRef(loader, loader->measure.total_angle + 3 * ONE_BULLET_DELTA_ANGLE); // 增加3发
-        hibernate_time = DWT_GetTimeline_ms();                                                  // 记录触发指令的时间
-        dead_time = 300;                                                                        // 完成3发弹丸发射的时间
-        break;
-    // 连发模式,对速度闭环,根据枪口剩余热量(barrel heat余量)动态选择拨弹射频
+
+    // 连发: 对速度闭环,根据枪口剩余热量(barrel heat余量)动态选择拨弹射频
     // 仿中科大开源步兵Booster_Control_Type_AUTO热量控制逻辑:
     //   余量充足时全速发射;余量进入缓冲区后在目标射频与可持续射频(冷却速率)之间线性过渡;余量过低时停火
-    case LOAD_BURSTFIRE:
+    case BOOSTER_AUTO:
     {
         DJIMotorOuterLoop(loader, SPEED_LOOP);
 
@@ -259,42 +284,8 @@ static void ShootOutput()
         DJIMotorSetRef(loader, now_rate * 360 * REDUCTION_RATIO_LOADER / NUM_PER_CIRCLE);
         break;
     }
-    // 拨盘反转,对速度闭环,后续增加卡弹检测(通过裁判系统剩余热量反馈和电机电流)
-    // 也有可能需要从switch-case中独立出来
-    case LOAD_REVERSE:
-        DJIMotorOuterLoop(loader, SPEED_LOOP);
-        // ...
-        break;
     default:
-        while (1)
-            ; // 未知模式,停止运行,检查指针越界,内存溢出等问题
-    }
-
-    // 确定是否开启摩擦轮,后续可能修改为键鼠模式下始终开启摩擦轮(上场时建议一直开启)
-    // 2026 ARCC Speed limits: 17mm 25m/s(45000-24m/s), 42mm 15m/s
-    if (shoot_cmd_recv.friction_mode == FRICTION_ON)
-    {
-        // 根据收到的弹速设置设定摩擦轮电机参考值,需实测后填入
-        switch (shoot_cmd_recv.bullet_speed)
-        {
-        case SMALL_AMU_15:
-            DJIMotorSetRef(friction_l, 0);
-            DJIMotorSetRef(friction_r, 0);
-            break;
-        case SMALL_AMU_25:
-            DJIMotorSetRef(friction_l, 45000);
-            DJIMotorSetRef(friction_r, 45000);
-            break;
-        default:
-            DJIMotorSetRef(friction_l, 45000);
-            DJIMotorSetRef(friction_r, 45000);
-            break;
-        }
-    }
-    else // 关闭摩擦轮
-    {
-        DJIMotorSetRef(friction_l, 0);
-        DJIMotorSetRef(friction_r, 0);
+        break;
     }
 
     // 开关弹舱盖
@@ -320,10 +311,11 @@ void ShootTask()
     // 用方波给阶跃，观察 dbg_loader_*_ref / dbg_loader_*_measure 跟随情况
     if (loader_tuning)
     {
-        // 安全: 调拨盘时强制停摩擦轮
-        DJIMotorStop(friction_l);
-        DJIMotorStop(friction_r);
-        DJIMotorEnable(loader);
+        // 安全: 调拨盘时摩擦轮给零速参考(不真正停机,退出调参后能正常恢复)
+        DJIMotorOuterLoop(friction_l, SPEED_LOOP);
+        DJIMotorOuterLoop(friction_r, SPEED_LOOP);
+        DJIMotorSetRef(friction_l, 0);
+        DJIMotorSetRef(friction_r, 0);
 
         float t = DWT_GetTimeline_s();
 
@@ -355,8 +347,10 @@ void ShootTask()
         return;
     }
 
-    // 急停时复位状态机, 保证 ShootOutput() 执行真正停机, FSM 不在急停期间劫持拨盘 (安全保护)
-    if (shoot_cmd_recv.shoot_mode == SHOOT_OFF)
+    // 发射机构状态由cmd直接给定(单一状态机, shoot_cmd_recv.shoot_state):
+    //   上电默认失能,第一次触发单发/连发后激活,之后在停火(飞轮常转)与发射态间切换,只有急停才回失能
+    // 失能时复位卡弹状态机,保证 ShootOutput() 真正停机, FSM 不在失能期间劫持拨盘(安全保护)
+    if (shoot_cmd_recv.shoot_state == BOOSTER_DISABLE)
         ShootJamSetStatus(JAM_NORMAL);
 
     // 卡弹处理状态机: 仿中科大Class_Booster
@@ -366,6 +360,7 @@ void ShootTask()
         ShootOutput();
 
     dbg_jam_status = (uint8_t)jam_status;
+    dbg_booster_type = (uint8_t)shoot_cmd_recv.shoot_state;
     dbg_loader_current_ref = loader->motor_controller.current_PID.Ref;
     dbg_loader_current_measure = loader->motor_controller.current_PID.Measure;
     dbg_loader_speed_ref = loader->motor_controller.speed_PID.Ref;

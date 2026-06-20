@@ -34,6 +34,7 @@
 #define PITCH_GRAVITY_FF_COEF 3600.0f // pitch重力补偿前馈系数,电流单位,实测标定
 // 发射参数
 #define ONE_BULLET_DELTA_ANGLE 45.0f    // 发射一发弹丸拨盘转动的距离,由机械设计图纸给出
+#define HOLD_TO_BURST_TIME_MS 100.0f    // 鼠标左键按住超过此时长(ms)由单发切换为连发
 #define REDUCTION_RATIO_LOADER 36.0f // 2006拨盘电机的减速比,英雄需要修改为3508的19.0f
 #define NUM_PER_CIRCLE 8            // 拨盘一圈的装载量
 // 机器人底盘修改的参数,单位为mm(毫米)
@@ -116,14 +117,14 @@ typedef enum
     LID_CLOSE,    // 弹舱盖关闭
 } lid_mode_e;
 
+// 发射机构状态(单一状态机): 仿中科大Booster_Control_Type, 由cmd直接设定,shoot直接执行,无两层映射
 typedef enum
 {
-    LOAD_STOP = 0,  // 停止发射
-    LOAD_REVERSE,   // 反转
-    LOAD_1_BULLET,  // 单发
-    LOAD_3_BULLET,  // 三发
-    LOAD_BURSTFIRE, // 连发
-} loader_mode_e;
+    BOOSTER_DISABLE = 0, // 失能: 全部电机停(含飞轮), 上电默认/急停
+    BOOSTER_CEASEFIRE,   // 停火: 拨盘停, 飞轮常转
+    BOOSTER_SPOT,        // 单发: 拨一发, 之后由cmd回到停火
+    BOOSTER_AUTO,        // 连发: 热量受限连发, 飞轮常转
+} shoot_state_e;
 
 // 功率限制,从裁判系统获取,是否有必要保留?
 typedef struct
@@ -164,10 +165,8 @@ typedef struct
 // cmd发布的发射控制数据,由shoot订阅
 typedef struct
 {
-    shoot_mode_e shoot_mode;
-    loader_mode_e load_mode;
+    shoot_state_e shoot_state;   // 发射机构状态:失能/停火/单发/连发,由cmd直接控制(单一状态机)
     lid_mode_e lid_mode;
-    friction_mode_e friction_mode;
     Bullet_Speed_e bullet_speed; // 弹速枚举
     uint8_t rest_heat;
     float shoot_rate; // 连续发射的射频,unit per s,发/秒
