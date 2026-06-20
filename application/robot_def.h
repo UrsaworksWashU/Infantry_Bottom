@@ -27,13 +27,14 @@
 /* 机器人重要参数定义,注意根据不同机器人进行修改,浮点数需要以.0或f结尾,无符号以u结尾 */
 //TODO: change parameters according to the actual robot
 // 云台参数
-#define YAW_CHASSIS_ALIGN_ECD 430.0  // 云台和底盘对齐指向相同方向时的电机编码器值,若对云台有机械改动需要修改
+#define YAW_CHASSIS_ALIGN_ECD 430  // 云台和底盘对齐指向相同方向时的电机编码器值,若对云台有机械改动需要修改
 #define PITCH_HORIZON_ECD 7609      // 云台处于水平位置时编码器值,若对云台有机械改动需要修改
 #define PITCH_MAX_ANGLE 6.0f       // 云台竖直方向最大角度,陀螺仪deg,向上为正,根据机械限位实测后修改
 #define PITCH_MIN_ANGLE -10.0f      // 云台竖直方向最小角度,陀螺仪deg,向下为负,根据机械限位实测后修改
-#define PITCH_GRAVITY_FF_COEF 1400.0f // pitch重力补偿前馈系数,电流单位,实测标定
+#define PITCH_GRAVITY_FF_COEF 3600.0f // pitch重力补偿前馈系数,电流单位,实测标定
 // 发射参数
 #define ONE_BULLET_DELTA_ANGLE 45.0f    // 发射一发弹丸拨盘转动的距离,由机械设计图纸给出
+#define HOLD_TO_BURST_TIME_MS 100.0f    // 鼠标左键按住超过此时长(ms)由单发切换为连发
 #define REDUCTION_RATIO_LOADER 36.0f // 2006拨盘电机的减速比,英雄需要修改为3508的19.0f
 #define NUM_PER_CIRCLE 8            // 拨盘一圈的装载量
 // 机器人底盘修改的参数,单位为mm(毫米)
@@ -84,7 +85,8 @@ typedef enum
 typedef enum
 {
     CHASSIS_ZERO_FORCE = 0,    // 电流零输入
-    CHASSIS_ROTATE,            // 小陀螺模式
+    CHASSIS_ROTATE_CLOCKWISE,            // 小陀螺模式
+    CHASSIS_ROTATE_COUNTERCLOCKWISE,
     CHASSIS_NO_FOLLOW,         // 不跟随，允许全向平移
     CHASSIS_FOLLOW_GIMBAL_YAW, // 跟随模式，底盘叠加角度环控制
 } chassis_mode_e;
@@ -115,14 +117,14 @@ typedef enum
     LID_CLOSE,    // 弹舱盖关闭
 } lid_mode_e;
 
+// 发射机构状态(单一状态机): 仿中科大Booster_Control_Type, 由cmd直接设定,shoot直接执行,无两层映射
 typedef enum
 {
-    LOAD_STOP = 0,  // 停止发射
-    LOAD_REVERSE,   // 反转
-    LOAD_1_BULLET,  // 单发
-    LOAD_3_BULLET,  // 三发
-    LOAD_BURSTFIRE, // 连发
-} loader_mode_e;
+    BOOSTER_DISABLE = 0, // 失能: 全部电机停(含飞轮), 上电默认/急停
+    BOOSTER_CEASEFIRE,   // 停火: 拨盘停, 飞轮常转
+    BOOSTER_SPOT,        // 单发: 拨一发, 之后由cmd回到停火
+    BOOSTER_AUTO,        // 连发: 热量受限连发, 飞轮常转
+} shoot_state_e;
 
 // 功率限制,从裁判系统获取,是否有必要保留?
 typedef struct
@@ -163,10 +165,8 @@ typedef struct
 // cmd发布的发射控制数据,由shoot订阅
 typedef struct
 {
-    shoot_mode_e shoot_mode;
-    loader_mode_e load_mode;
+    shoot_state_e shoot_state;   // 发射机构状态:失能/停火/单发/连发,由cmd直接控制(单一状态机)
     lid_mode_e lid_mode;
-    friction_mode_e friction_mode;
     Bullet_Speed_e bullet_speed; // 弹速枚举
     uint8_t rest_heat;
     float shoot_rate; // 连续发射的射频,unit per s,发/秒

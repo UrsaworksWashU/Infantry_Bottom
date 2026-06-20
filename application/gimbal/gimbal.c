@@ -25,10 +25,18 @@ volatile float dbg_pitch_angle_ref;
 volatile float dbg_pitch_angle_measure;
 volatile float dbg_yaw_angle_ref;
 volatile float dbg_yaw_angle_measure;
+volatile float dbg_pitch_speed_ff;
 
 // pitch重力补偿前馈，电流单位（同speed PID MaxOut），Ozone实时调参，调好后写入robot_def.h
 static float   pitch_gravity_ff      = 0.0f; // 由motor_task 1kHz读取，必须是static全局
 volatile float pitch_gravity_ff_coef = PITCH_GRAVITY_FF_COEF; // Ozone可实时改，正值=向上补偿，符号不对则取负
+
+// pitch方向/速度前馈：目标角度变化率d(pitch_ref)/dt喂给速度环，抵消角度环响应滞后
+// 注入speed槽（速度环之前），与重力前馈的current槽并存。motor_task 1kHz读取，必须static
+static float   pitch_speed_ff        = 0.0f; // deg/s
+volatile float pitch_speed_ff_coef   = 1.0f; // Ozone实时调，0=关闭，1=完全前馈，符号不对则取负
+volatile float pitch_speed_ff_lpf    = 0.3f; // 低通系数(0~1)，越小越平滑，抑制ref跳变冲击
+static float   last_pitch_ref        = 0.0f; // 上一拍目标角度，用于差分求导
 
 // 速度环调参：Ozone把 tuning 设为1进入，0恢复正常
 // 调哪个电机就取消对应块的注释，另一个保持注释
@@ -85,7 +93,7 @@ void GimbalInit()
         },
         .controller_param_init_config = {
             .angle_PID = {
-                .Kp = 12,
+                .Kp = 24,
                 .Ki = 0,
                 .Kd = 0,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
@@ -93,7 +101,7 @@ void GimbalInit()
                 .MaxOut = 500,
             },
             .speed_PID = {
-                .Kp = 120,
+                .Kp = 260,
                 .Ki = 20,
                 .Kd = 0,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
@@ -104,6 +112,7 @@ void GimbalInit()
             // Gyro[0]是rad/s，speed PID需要deg/s，所以指向转换后的pitch_gyro_dps
             .other_speed_feedback_ptr = &gimbal_IMU_data->Gyro_dps[0],
             .current_feedforward_ptr  = &pitch_gravity_ff,
+            .speed_feedforward_ptr    = &pitch_speed_ff,
         },
         .controller_setting_init_config = {
             .angle_feedback_source = OTHER_FEED,
@@ -111,7 +120,7 @@ void GimbalInit()
             .outer_loop_type = ANGLE_LOOP,
             .close_loop_type = SPEED_LOOP | ANGLE_LOOP,
             .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
-            .feedforward_flag   = CURRENT_FEEDFORWARD,
+            .feedforward_flag   = CURRENT_AND_SPEED_FEEDFORWARD,
         },
         .motor_type = GM6020,
     };
@@ -221,6 +230,15 @@ void GimbalTask()
     // pitch重力补偿前馈：注入到speed PID输出之后（电流单位），motor_task 1kHz读取
     pitch_gravity_ff = pitch_gravity_ff_coef * cosf(gimbal_IMU_data->Pitch * (3.14159265f / 180.0f));
 
+    // pitch方向/速度前馈：目标角度变化率喂给速度环，注入到speed PID之前（deg/s）
+    // GimbalTask 200Hz，dt=5ms；裸差分后一阶低通抑制ref跳变冲击
+    {
+        float pitch_ref_now = pitch_motor->motor_controller.angle_PID.Ref;
+        float raw_ff        = pitch_speed_ff_coef * (pitch_ref_now - last_pitch_ref) / 0.005f;
+        pitch_speed_ff      = pitch_speed_ff + pitch_speed_ff_lpf * (raw_ff - pitch_speed_ff);
+        last_pitch_ref      = pitch_ref_now;
+    }
+
     // 设置反馈数据,主要是imu和yaw的ecd
     gimbal_feedback_data.gimbal_imu_data = *gimbal_IMU_data;
     gimbal_feedback_data.yaw_motor_single_round_angle = yaw_motor->measure.angle_single_round;
@@ -231,6 +249,7 @@ void GimbalTask()
     dbg_pitch_angle_measure = pitch_motor->motor_controller.angle_PID.Measure;
     dbg_yaw_angle_ref       = yaw_motor->motor_controller.angle_PID.Ref;
     dbg_yaw_angle_measure   = yaw_motor->motor_controller.angle_PID.Measure;
+    dbg_pitch_speed_ff      = pitch_speed_ff;
 
     // 推送消息
     PubPushMessage(gimbal_pub, (void *)&gimbal_feedback_data);
