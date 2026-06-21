@@ -235,8 +235,8 @@ static void DecodeVision(uint16_t recv_len)
 }
 
 /* 视觉通信初始化
- * Jetson端需建立udev规则将/dev/ttyACM0映射为/dev/gimbal:
- *   SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="00ca", SYMLINK+="gimbal"
+ * Jetson端需建立udev规则将/dev/ttyACM0映射为/dev/cboard(Vision26中com_port需与此一致):
+ *   SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="00ca", SYMLINK+="cboard"
  */
 Vision_Recv_s *VisionInit(UART_HandleTypeDef *_handle)
 {
