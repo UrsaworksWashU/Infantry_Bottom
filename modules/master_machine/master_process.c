@@ -101,7 +101,9 @@ void VisionSend()
     static uint8_t send_buff[VISION_SEND_SIZE];
     static uint16_t tx_len;
     // TODO: code to set flag_register
-    flag_register = 30 << 8 | 0b00000001;
+    flag_register = (uint16_t)(send_data.bullet_speed) << 8 |
+                    (uint8_t)(send_data.work_mode) << 2 |
+                    (uint8_t)(send_data.enemy_color);
     // 将数据转化为seasky协议的数据包
     get_protocol_send_data(0x02, flag_register, &send_data.yaw, 3, send_buff, &tx_len);
     USARTSend(vision_usart_instance, send_buff, tx_len, USART_TRANSFER_DMA); // 和视觉通信使用IT,防止和接收使用的DMA冲突
@@ -113,6 +115,28 @@ void VisionSend()
 #endif // VISION_USE_UART
 
 #ifdef VISION_USE_VCP
+
+/*
+ * rm_serial_driver compatible protocol (same CRC16 as SP_CRC16_TABLE).
+ *
+ * C-board -> Jetson  ReceivePacket  GIMBAL_TO_JETSON_SIZE = 34 bytes, header 0x5A
+ *   [0]     0x5A
+ *   [1]     flags: detect_color[0] task_mode[2:1] reset_tracker[3] is_play[4] change_target[5] rsvd[7:6]
+ *   [2-5]   roll  (float, rad)
+ *   [6-9]   pitch (float, rad)
+ *   [10-13] yaw   (float, rad)
+ *   [14-25] aim_x/y/z (float x3, filled 0)
+ *   [26-27] game_time (uint16, filled 0)
+ *   [28-31] timestamp (uint32, HAL_GetTick ms)
+ *   [32-33] CRC16-IBM-SDLC (poly 0x8408, init 0xFFFF)
+ *
+ * Jetson -> C-board  SendPacket  JETSON_TO_GIMBAL_SIZE = 12 bytes, header 0xA5
+ *   [0]    0xA5
+ *   [1]    mode: 0=no ctrl  1=aim no fire  2=aim+fire
+ *   [2-5]  yaw   (float, rad)  absolute target
+ *   [6-9]  pitch (float, rad)  absolute target
+ *   [10-11] CRC16
+ */
 
 #include "bsp_usb.h"
 #include "ins_task.h"
@@ -241,10 +265,14 @@ static void DecodeVision(uint16_t recv_len)
 Vision_Recv_s *VisionInit(UART_HandleTypeDef *_handle)
 {
     UNUSED(_handle);
+    UNUSED(_handle);
     USB_Init_Config_s conf = {.rx_cbk = DecodeVision};
     vis_recv_buff = USBInit(conf);
 
     Daemon_Init_Config_s daemon_conf = {
+        .callback     = VisionOfflineCallback,
+        .owner_id     = NULL,
+        .reload_count = 5,
         .callback     = VisionOfflineCallback,
         .owner_id     = NULL,
         .reload_count = 5,
@@ -254,6 +282,7 @@ Vision_Recv_s *VisionInit(UART_HandleTypeDef *_handle)
     return &recv_data;
 }
 
+/* Build and transmit 34-byte ReceivePacket to Jetson (0x5A header) */
 void VisionSend()
 {
     static uint8_t buf[GIMBAL_TO_VISION_SIZE];

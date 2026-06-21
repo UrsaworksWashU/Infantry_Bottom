@@ -133,6 +133,16 @@ referee_info_t *RefereeInit(UART_HandleTypeDef *referee_usart_handle)
 }
 
 /**
+ * @brief 获取已初始化的裁判系统数据指针(不重新初始化串口)
+ * @note  供其他应用(如shoot)读取热量等数据使用,避免重复注册串口
+ * @return referee_info_t* 裁判系统数据指针
+ */
+referee_info_t *RefereeGetInfo(void)
+{
+	return &referee_info;
+}
+
+/**
  * @brief 裁判系统数据发送函数
  * @param
  */

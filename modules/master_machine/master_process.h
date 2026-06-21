@@ -4,8 +4,14 @@
 #include "bsp_usart.h"
 #include "seasky_protocol.h"
 
-#define VISION_RECV_SIZE 18u // 当前为固定值,36字节
-#define VISION_SEND_SIZE 36u
+#define VISION_RECV_SIZE 18u // UART legacy size (seasky protocol)
+#define VISION_SEND_SIZE 36u // UART legacy size (seasky protocol)
+
+// VISION_USE_VCP: rm_serial_driver compatible protocol
+// C-board -> Jetson: ReceivePacket (0x5A header, 34 bytes)
+// Jetson -> C-board: SendPacket    (0xA5 header, 12 bytes)
+#define GIMBAL_TO_JETSON_SIZE 34u
+#define JETSON_TO_GIMBAL_SIZE 12u
 
 #pragma pack(1)
 typedef enum
@@ -65,7 +71,7 @@ typedef enum
 	BIG_AMU_10 = 10,
 	SMALL_AMU_15 = 15,
 	BIG_AMU_16 = 16,
-	SMALL_AMU_18 = 18,
+	SMALL_AMU_25 = 25,
 	SMALL_AMU_30 = 30,
 } Bullet_Speed_e;
 

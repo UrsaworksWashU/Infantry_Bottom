@@ -106,6 +106,8 @@ typedef struct
         int16_t y;
         uint8_t press_l;
         uint8_t press_r;
+        uint8_t press_l_count; // 左键按下(上升沿)计数,用于单击判断
+        uint8_t press_r_count; // 右键按下(上升沿)计数,用于单击判断
     } mouse;
 
     Key_t key[3]; // 改为位域后的键盘索引,空间减少8倍,速度增加16~倍
