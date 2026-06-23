@@ -159,6 +159,8 @@ static void RemoteControlSet()
     // horizontal controller stick negative left, positive right
     gimbal_cmd_send.pitch +=  0.001f * (float)rc_data[TEMP].rc.rocker_r1; // r1 for horizontal direction
     gimbal_cmd_send.yaw   += -0.005f * (float)rc_data[TEMP].rc.rocker_r_; // r for vertical direction
+    gimbal_cmd_send.yaw_speed_ff   = 0.0f; // 手动模式无前馈
+    gimbal_cmd_send.pitch_speed_ff = 0.0f;
     // Put it here rather than gimbal.c so pitch can have continuous control when hitting the limit, 
     // it doesn't need to counteract the exceeded values
     if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
@@ -178,7 +180,7 @@ static void RemoteControlSet()
     // 发射机构状态控制(拨轮向上打为负): 回中失能, 上拨过半停火(飞轮常转), 上拨到底连发
     if (rc_data[TEMP].rc.dial < -500) // 上拨到底: 连发
         shoot_cmd_send.shoot_state = BOOSTER_AUTO;
-    else if (rc_data[TEMP].rc.dial < 100) // 上拨过半: 飞轮常转,不发弹
+    else if (rc_data[TEMP].rc.dial < -100) // 上拨过半: 飞轮常转,不发弹
         shoot_cmd_send.shoot_state = BOOSTER_CEASEFIRE;
     else // 回中: 失能,飞轮停
         shoot_cmd_send.shoot_state = BOOSTER_DISABLE;
@@ -200,6 +202,15 @@ static void RemoteControlSet()
           while (err < -180.0f) err += 360.0f;
           gimbal_cmd_send.yaw   = gimbal_fetch_data.gimbal_imu_data.YawTotalAngle + err;
           gimbal_cmd_send.pitch = -vision_recv_data->pitch * 57.2958f;
+          // 视觉轨迹规划器的速度前馈，rad/s -> deg/s，直接喂给云台速度环
+          // pitch与角度一致取负，保持方向定义统一
+          gimbal_cmd_send.yaw_speed_ff   =  vision_recv_data->yaw_vel   * 57.2958f;
+          gimbal_cmd_send.pitch_speed_ff = -vision_recv_data->pitch_vel * 57.2958f;
+      }
+      else
+      {
+          gimbal_cmd_send.yaw_speed_ff   = 0.0f; // 无目标，关闭前馈
+          gimbal_cmd_send.pitch_speed_ff = 0.0f;
       }
         // 发射机构状态控制(拨轮向上打为负): 上拨到底且视觉判定可开火->连发, 上拨过半->飞轮常转待发, 回中->失能
         if (rc_data[TEMP].rc.dial < -500 && vision_recv_data->target_state == READY_TO_FIRE)
@@ -237,6 +248,8 @@ static void MouseKeySet()
 
     gimbal_cmd_send.yaw   += -(float)rc_data[TEMP].mouse.x * 0.005f;
     gimbal_cmd_send.pitch +=  (float)rc_data[TEMP].mouse.y * 0.001f;
+    gimbal_cmd_send.yaw_speed_ff   = 0.0f; // 键鼠模式无前馈
+    gimbal_cmd_send.pitch_speed_ff = 0.0f;
     if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
     if (gimbal_cmd_send.pitch < PITCH_MIN_ANGLE) gimbal_cmd_send.pitch = PITCH_MIN_ANGLE;
 
@@ -378,10 +391,10 @@ void RobotCMDTask()
     // 设置视觉发送数据,还需增加加速度和角速度数据
     // VisionSetFlag(chassis_fetch_data.enemy_color, VISION_MODE_AIM, chassis_fetch_data.bullet_speed);
     VisionSetFlag(COLOR_RED, VISION_MODE_AIM, SMALL_AMU_15); // TODO: get color/speed from referee
-    // 发送当前云台姿态给上位机用于弹道解算
-    VisionSetAltitude(gimbal_fetch_data.gimbal_imu_data.YawTotalAngle,
-                      gimbal_fetch_data.gimbal_imu_data.Pitch,
-                      gimbal_fetch_data.gimbal_imu_data.Roll);
+    // 发送当前云台姿态给上位机用于弹道解算 不再使用 INS里会发送 因为那个是1000Hz task 频率更高
+    // VisionSetAltitude(gimbal_fetch_data.gimbal_imu_data.Yaw/57.2958f,
+    //                   gimbal_fetch_data.gimbal_imu_data.Pitch/57.2958f,
+    //                   gimbal_fetch_data.gimbal_imu_data.Roll/57.2958f);
     VisionSend();
 
     // 推送消息,双板通信,视觉通信等

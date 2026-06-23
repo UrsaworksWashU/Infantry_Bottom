@@ -49,6 +49,11 @@ typedef struct
 
 	float pitch;
 	float yaw;
+	// 轨迹规划器前馈量（单位与yaw/pitch一致：rad / rad/s / rad/s²）
+	float yaw_vel;
+	float yaw_acc;
+	float pitch_vel;
+	float pitch_acc;
 } Vision_Recv_s;
 
 typedef enum

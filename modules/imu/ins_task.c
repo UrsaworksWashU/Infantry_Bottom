@@ -120,6 +120,11 @@ const float *INS_GetQuaternion(void)
     return INS.q;
 }
 
+const float *INS_GetGyro(void)
+{
+    return INS.Gyro; // 角速度,单位rad/s,索引Z(=2)为yaw角速度
+}
+
 /* 注意以1kHz的频率运行此任务 */
 void INS_Task(void)
 {
@@ -175,7 +180,7 @@ void INS_Task(void)
         INS.Roll = QEKF_INS.Roll;
         INS.YawTotalAngle = QEKF_INS.YawTotalAngle;
 
-        VisionSetAltitude(INS.Yaw, INS.Pitch, INS.Roll);
+        VisionSetAltitude(INS.Yaw/57.2958f, -INS.Pitch/57.2958f, INS.Roll/57.2958f);
     }
 
     // temperature control

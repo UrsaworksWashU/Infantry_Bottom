@@ -94,6 +94,13 @@ attitude_t *INS_Init(void);
 const float *INS_GetQuaternion(void);
 
 /**
+ * @brief 获取IMU角速度指针,单位rad/s(索引X/Y/Z=0/1/2),供视觉等直接发送原始角速度使用
+ *
+ * @return const float* 指向INS.Gyro[3]的指针
+ */
+const float *INS_GetGyro(void);
+
+/**
  * @brief 此函数放入实时系统中,以1kHz频率运行
  *        p.s. osDelay(1);
  *

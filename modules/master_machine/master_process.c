@@ -239,8 +239,12 @@ static void DecodeVision(uint16_t recv_len)
 
     DaemonReload(vision_daemon_instance);
 
-    memcpy(&recv_data.yaw,   p + 3,  4);
-    memcpy(&recv_data.pitch, p + 15, 4);
+    memcpy(&recv_data.yaw,       p + 3,  4);
+    memcpy(&recv_data.yaw_vel,   p + 7,  4);
+    memcpy(&recv_data.yaw_acc,   p + 11, 4);
+    memcpy(&recv_data.pitch,     p + 15, 4);
+    memcpy(&recv_data.pitch_vel, p + 19, 4);
+    memcpy(&recv_data.pitch_acc, p + 23, 4);
 
     switch (p[2]) {
         case 2:
@@ -307,6 +311,10 @@ void VisionSend()
     q[2] = ins_q[2];
     q[3] = ins_q[3];
     bullet_spd = (float)send_data.bullet_speed;
+    /* yaw角速度回传给上位机,INS.Gyro[Z]本身即rad/s,无需换算 */
+    float yaw_vel = INS_GetGyro()[Z];
+    /* pitch角速度回传给上位机,Gyro[X]即rad/s,取负对齐上位机pitch方向(同-INS.Pitch约定) */
+    float pitch_vel = -INS_GetGyro()[X];
 
     buf[0] = 'S';
     buf[1] = 'P';
@@ -316,9 +324,9 @@ void VisionSend()
     memcpy(buf + 11, &q[2],            4);
     memcpy(buf + 15, &q[3],            4);
     memcpy(buf + 19, &send_data.yaw,   4);
-    memcpy(buf + 23, &zero,            4); /* yaw_vel */
+    memcpy(buf + 23, &yaw_vel,         4); /* yaw_vel, rad/s */
     memcpy(buf + 27, &send_data.pitch, 4);
-    memcpy(buf + 31, &zero,            4); /* pitch_vel */
+    memcpy(buf + 31, &pitch_vel,       4); /* pitch_vel, rad/s */
     memcpy(buf + 35, &bullet_spd,      4);
     memcpy(buf + 39, &count,           2); /* bullet_count */
 

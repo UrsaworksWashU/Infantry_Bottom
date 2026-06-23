@@ -32,12 +32,18 @@ volatile float dbg_yaw_angle_measure;
 static float   pitch_gravity_ff      = 0.0f; // 由motor_task 1kHz读取，必须是static全局
 volatile float pitch_gravity_ff_coef = PITCH_GRAVITY_FF_COEF; // Ozone可实时改，正值=向上补偿，符号不对则取负
 
-// pitch方向/速度前馈：目标角度变化率d(pitch_ref)/dt喂给速度环，抵消角度环响应滞后
+// pitch速度前馈：视觉轨迹规划器算出的plan pitch速度，经cmd(rad/s→deg/s，取负)喂给速度环
 // 注入speed槽（速度环之前），与重力前馈的current槽并存。motor_task 1kHz读取，必须static
-static float   pitch_speed_ff        = 0.0f; // deg/s
+static float   pitch_speed_ff        = 0.0f; // deg/s，由视觉规划器前馈值经低通后注入速度环
 volatile float pitch_speed_ff_coef   = 1.0f; // Ozone实时调，0=关闭，1=完全前馈，符号不对则取负
-volatile float pitch_speed_ff_lpf    = 0.3f; // 低通系数(0~1)，越小越平滑，抑制ref跳变冲击
-static float   last_pitch_ref        = 0.0f; // 上一拍目标角度，用于差分求导
+volatile float pitch_speed_ff_lpf    = 0.3f; // 低通系数(0~1)，越小越平滑；视觉数据已较平滑，可酌情调大减小滞后
+
+// yaw速度前馈：视觉轨迹规划器算出的plan yaw速度，经cmd(rad/s→deg/s)喂给速度环，抵消角度环滞后
+// 注入speed槽（速度环之前），单位deg/s。motor_task 1kHz读取，必须static
+// 接上后角度环Kp应往下调（原靠大Kp硬拉跟随，现由前馈承担），否则会过冲
+static float   yaw_speed_ff          = 0.0f; // deg/s，由视觉规划器前馈值经低通后注入速度环
+volatile float yaw_speed_ff_coef     = 1.0f; // Ozone实时调，0=关闭，1=完全前馈，符号不对则取负
+volatile float yaw_speed_ff_lpf      = 0.3f; // 低通系数(0~1)，越小越平滑；视觉数据已较平滑，可酌情调大减小滞后
 
 // 速度环调参：Ozone把 tuning 设为1进入，0恢复正常
 // 调哪个电机就取消对应块的注释，另一个保持注释
@@ -77,6 +83,7 @@ void GimbalInit()
             .other_angle_feedback_ptr = &gimbal_IMU_data->YawTotalAngle,
             // Gyro[2]是rad/s，speed PID需要deg/s，所以指向转换后的yaw_gyro_dps
             .other_speed_feedback_ptr = &gimbal_IMU_data->Gyro_dps[2],
+            .speed_feedforward_ptr    = &yaw_speed_ff,
         },
         .controller_setting_init_config = {
             .angle_feedback_source = OTHER_FEED,
@@ -84,6 +91,7 @@ void GimbalInit()
             .outer_loop_type = ANGLE_LOOP,
             .close_loop_type = ANGLE_LOOP | SPEED_LOOP,
             .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
+            .feedforward_flag   = SPEED_FEEDFORWARD,
         },
         .motor_type = GM6020};
     // PITCH
@@ -94,7 +102,7 @@ void GimbalInit()
         },
         .controller_param_init_config = {
             .angle_PID = {
-                .Kp = 24,
+                .Kp = 24, //24,
                 .Ki = 0,
                 .Kd = 0,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
@@ -102,8 +110,8 @@ void GimbalInit()
                 .MaxOut = 500,
             },
             .speed_PID = {
-                .Kp = 260,
-                .Ki = 20,
+                .Kp = 260, //260,
+                .Ki = 20, // 20,
                 .Kd = 0,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
                 .IntegralLimit = 2500,
@@ -231,13 +239,18 @@ void GimbalTask()
     // pitch重力补偿前馈：注入到speed PID输出之后（电流单位），motor_task 1kHz读取
     pitch_gravity_ff = pitch_gravity_ff_coef * cosf(gimbal_IMU_data->Pitch * (3.14159265f / 180.0f));
 
-    // pitch方向/速度前馈：目标角度变化率喂给速度环，注入到speed PID之前（deg/s）
-    // GimbalTask 200Hz，dt=5ms；裸差分后一阶低通抑制ref跳变冲击
+    // pitch速度前馈：直接用视觉轨迹规划器算出的pitch速度（cmd已转成deg/s、并取负对齐方向）
+    // 与重力前馈的current槽并存；视觉数据较平滑，仍过一阶低通；coef用于符号/标度修正、0可关闭
     {
-        float pitch_ref_now = pitch_motor->motor_controller.angle_PID.Ref;
-        float raw_ff        = pitch_speed_ff_coef * (pitch_ref_now - last_pitch_ref) / 0.005f;
-        pitch_speed_ff      = pitch_speed_ff + pitch_speed_ff_lpf * (raw_ff - pitch_speed_ff);
-        last_pitch_ref      = pitch_ref_now;
+        float raw_ff   = pitch_speed_ff_coef * gimbal_cmd_recv.pitch_speed_ff;
+        pitch_speed_ff = pitch_speed_ff + pitch_speed_ff_lpf * (raw_ff - pitch_speed_ff);
+    }
+
+    // yaw速度前馈：直接用视觉轨迹规划器算出的yaw速度（cmd已转成deg/s），不再板上差分
+    // 视觉数据本身平滑，仍过一阶低通抑制离散更新台阶；coef用于符号/标度修正、0可关闭
+    {
+        float raw_ff = yaw_speed_ff_coef * gimbal_cmd_recv.yaw_speed_ff;
+        yaw_speed_ff = yaw_speed_ff + yaw_speed_ff_lpf * (raw_ff - yaw_speed_ff);
     }
 
     // 设置反馈数据,主要是imu和yaw的ecd

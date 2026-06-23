@@ -159,6 +159,9 @@ typedef struct
     float pitch;
     float chassis_rotate_wz;
 
+    float yaw_speed_ff;   // yaw速度前馈，deg/s，来自视觉轨迹规划器(非视觉模式置0)
+    float pitch_speed_ff; // pitch速度前馈，deg/s，来自视觉轨迹规划器(非视觉模式置0)
+
     gimbal_mode_e gimbal_mode;
 } Gimbal_Ctrl_Cmd_s;
 
