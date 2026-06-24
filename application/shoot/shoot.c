@@ -23,7 +23,7 @@ static referee_info_t *referee_data; // 裁判系统数据,用于读取枪口热
 static float hibernate_time = 0, dead_time = 0;
 
 // 连发目标射频(发/秒),仿中科大Target_Ammo_Shoot_Frequency,默认用此速度,可Ozone实时调
-static float target_ammo_shoot_frequency = 10.0f;
+static float target_ammo_shoot_frequency = 20.0f;
 
 volatile float dbg_loader_current_ref;
 volatile float dbg_loader_current_measure;
@@ -187,7 +187,7 @@ static void ShootJamFSM(void)
 }
 
 /* 摩擦轮(飞轮)输出: 仿中科大,在停火/单发/连发态常转,根据弹速设定转速 */
-// 2026 ARCC Speed limits: 17mm 25m/s(45000-24m/s), 42mm 15m/s
+// 2026 ARCC Speed limits: 17mm 25m/s(42000-22~23m/s), 42mm 15m/s
 static void FrictionOutput()
 {
     // 根据收到的弹速设置设定摩擦轮电机参考值,需实测后填入
@@ -197,13 +197,13 @@ static void FrictionOutput()
         DJIMotorSetRef(friction_l, 0);
         DJIMotorSetRef(friction_r, 0);
         break;
-    case SMALL_AMU_25:
-        DJIMotorSetRef(friction_l, 45000);
-        DJIMotorSetRef(friction_r, 45000);
+    case SMALL_AMU_22:
+        DJIMotorSetRef(friction_l, 42000);
+        DJIMotorSetRef(friction_r, 42000);
         break;
     default:
-        DJIMotorSetRef(friction_l, 45000);
-        DJIMotorSetRef(friction_r, 45000);
+        DJIMotorSetRef(friction_l, 42000);
+        DJIMotorSetRef(friction_r, 42000);
         break;
     }
 }

@@ -76,7 +76,7 @@ typedef enum
 	BIG_AMU_10 = 10,
 	SMALL_AMU_15 = 15,
 	BIG_AMU_16 = 16,
-	SMALL_AMU_25 = 25,
+	SMALL_AMU_22 = 22,
 	SMALL_AMU_30 = 30,
 } Bullet_Speed_e;
 
@@ -84,7 +84,8 @@ typedef struct
 {
 	Enemy_Color_e enemy_color;
 	Work_Mode_e work_mode;
-	Bullet_Speed_e bullet_speed;
+	Bullet_Speed_e bullet_speed;     // 弹速档位枚举(UART协议flag位使用)
+	float bullet_speed_real;         // 裁判系统实测弹速(m/s),用于上位机弹道解算
 
 	float yaw;
 	float pitch;
@@ -113,6 +114,13 @@ void VisionSend();
  * @param bullet_speed
  */
 void VisionSetFlag(Enemy_Color_e enemy_color, Work_Mode_e work_mode, Bullet_Speed_e bullet_speed);
+
+/**
+ * @brief 设置回传给上位机的实测弹速(来自裁判系统0x0207实时射击数据)
+ *
+ * @param speed 弹速,单位m/s
+ */
+void VisionSetBulletSpeed(float speed);
 
 /**
  * @brief 设置发送数据的姿态部分

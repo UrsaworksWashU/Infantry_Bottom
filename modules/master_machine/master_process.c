@@ -32,6 +32,11 @@ void VisionSetAltitude(float yaw, float pitch, float roll)
     send_data.roll = roll;
 }
 
+void VisionSetBulletSpeed(float speed)
+{
+    send_data.bullet_speed_real = speed;
+}
+
 /**
  * @brief 离线回调函数,将在daemon.c中被daemon task调用
  * @attention 由于HAL库的设计问题,串口开启DMA接收之后同时发送有概率出现__HAL_LOCK()导致的死锁,使得无法
@@ -310,7 +315,8 @@ void VisionSend()
     q[1] = ins_q[1];
     q[2] = ins_q[2];
     q[3] = ins_q[3];
-    bullet_spd = (float)send_data.bullet_speed;
+    /* 回传裁判系统实测弹速(m/s)供上位机弹道解算 */
+    bullet_spd = send_data.bullet_speed_real;
     /* yaw角速度回传给上位机,INS.Gyro[Z]本身即rad/s,无需换算 */
     float yaw_vel = INS_GetGyro()[Z];
     /* pitch角速度回传给上位机,Gyro[X]即rad/s,取负对齐上位机pitch方向(同-INS.Pitch约定) */
