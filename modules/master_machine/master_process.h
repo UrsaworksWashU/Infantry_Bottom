@@ -86,6 +86,7 @@ typedef struct
 	Work_Mode_e work_mode;
 	Bullet_Speed_e bullet_speed;     // 弹速档位枚举(UART协议flag位使用)
 	float bullet_speed_real;         // 裁判系统实测弹速(m/s),用于上位机弹道解算
+	Enemy_Color_e self_color;        // 本机颜色(裁判系统读取),回传上位机以确定要识别的敌方颜色
 
 	float yaw;
 	float pitch;
@@ -121,6 +122,13 @@ void VisionSetFlag(Enemy_Color_e enemy_color, Work_Mode_e work_mode, Bullet_Spee
  * @param speed 弹速,单位m/s
  */
 void VisionSetBulletSpeed(float speed);
+
+/**
+ * @brief 设置回传给上位机的本机颜色(红/蓝),上位机据此识别敌方装甲板
+ *
+ * @param color COLOR_NONE/COLOR_BLUE/COLOR_RED,来自裁判系统机器人ID
+ */
+void VisionSetSelfColor(Enemy_Color_e color);
 
 /**
  * @brief 设置发送数据的姿态部分

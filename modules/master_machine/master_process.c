@@ -37,6 +37,11 @@ void VisionSetBulletSpeed(float speed)
     send_data.bullet_speed_real = speed;
 }
 
+void VisionSetSelfColor(Enemy_Color_e color)
+{
+    send_data.self_color = color;
+}
+
 /**
  * @brief 离线回调函数,将在daemon.c中被daemon task调用
  * @attention 由于HAL库的设计问题,串口开启DMA接收之后同时发送有概率出现__HAL_LOCK()导致的死锁,使得无法
@@ -196,7 +201,7 @@ static uint16_t sp_crc16(const uint8_t *data, uint32_t len)
 /*
  * SP protocol wire layout (Vision26 io/gimbal/gimbal.hpp, __attribute__((packed))):
  *
- * GimbalToVision (STM32 → Jetson), 43 bytes:
+ * GimbalToVision (STM32 → Jetson), 44 bytes:
  *   [0]      'S'
  *   [1]      'P'
  *   [2]      mode  (0=idle, 1=auto_aim, 2=small_buff, 3=big_buff)
@@ -210,7 +215,8 @@ static uint16_t sp_crc16(const uint8_t *data, uint32_t len)
  *   [31–34]  pitch_vel (float, rad/s)
  *   [35–38]  bullet_speed (float, m/s)
  *   [39–40]  bullet_count (uint16 LE)
- *   [41–42]  crc16 (LE)
+ *   [41]     self_color   (uint8: 0=unknown, 1=blue, 2=red — 本机颜色)
+ *   [42–43]  crc16 (LE)
  *
  * VisionToGimbal (Jetson → STM32), 29 bytes:
  *   [0]      'S'
@@ -228,7 +234,7 @@ static uint16_t sp_crc16(const uint8_t *data, uint32_t len)
  * FPU (VLDR/VSTR) requires 4-byte alignment and will HardFault on unaligned access.
  * All float I/O therefore goes through memcpy into aligned local variables.
  */
-#define GIMBAL_TO_VISION_SIZE 43u
+#define GIMBAL_TO_VISION_SIZE 44u
 #define VISION_TO_GIMBAL_SIZE 29u
 
 static void DecodeVision(uint16_t recv_len)
@@ -335,10 +341,11 @@ void VisionSend()
     memcpy(buf + 31, &pitch_vel,       4); /* pitch_vel, rad/s */
     memcpy(buf + 35, &bullet_spd,      4);
     memcpy(buf + 39, &count,           2); /* bullet_count */
+    buf[41] = (uint8_t)send_data.self_color; /* 本机颜色: 0=unknown,1=blue,2=red */
 
     crc = sp_crc16(buf, GIMBAL_TO_VISION_SIZE - 2);
-    buf[41] = (uint8_t)(crc & 0xff);
-    buf[42] = (uint8_t)(crc >> 8);
+    buf[42] = (uint8_t)(crc & 0xff);
+    buf[43] = (uint8_t)(crc >> 8);
 
     USBTransmit(buf, GIMBAL_TO_VISION_SIZE);
 }

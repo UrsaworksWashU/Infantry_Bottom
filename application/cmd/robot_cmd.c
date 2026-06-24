@@ -405,6 +405,14 @@ void RobotCMDTask()
     if (referee_data->ShootData.bullet_speed > 0.0f)
         last_bullet_speed = referee_data->ShootData.bullet_speed;
     VisionSetBulletSpeed(last_bullet_speed);
+
+    // 回传本机颜色(红/蓝)给上位机以确定要识别的敌方颜色.
+    // 裁判系统机器人ID: 红方1~9, 蓝方101~109; ID为0表示裁判系统未上线,保持上一次有效值.
+    static Enemy_Color_e last_self_color = COLOR_NONE;
+    uint8_t robot_id = referee_data->GameRobotState.robot_id;
+    if (robot_id != 0)
+        last_self_color = (robot_id >= 100) ? COLOR_BLUE : COLOR_RED;
+    VisionSetSelfColor(last_self_color);
     // 发送当前云台姿态给上位机用于弹道解算 不再使用 INS里会发送 因为那个是1000Hz task 频率更高
     // VisionSetAltitude(gimbal_fetch_data.gimbal_imu_data.Yaw/57.2958f,
     //                   gimbal_fetch_data.gimbal_imu_data.Pitch/57.2958f,
