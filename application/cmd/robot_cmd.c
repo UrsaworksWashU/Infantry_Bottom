@@ -379,8 +379,10 @@ static void MouseKeySet()
  */
 static void EmergencyHandler()
 {
-    // 拨轮的向下拨超过一半进入急停模式.注意向打时下拨轮是正
-    if (rc_data[TEMP].rc.dial > 300 || robot_state == ROBOT_STOP) // 还需添加重要应用和模块离线的判断
+    // 急停触发: 遥控器拨轮向下拨过半(向下打时拨轮为正), 或 键鼠 Ctrl+X 组合键(等效拨轮下拨)
+    uint8_t kb_stop  = rc_data[TEMP].key[KEY_PRESS_WITH_CTRL].x;  // Ctrl+X -> 失能
+    uint8_t kb_ready = rc_data[TEMP].key[KEY_PRESS_WITH_SHIFT].x; // Shift+X -> 使能
+    if (rc_data[TEMP].rc.dial > 300 || kb_stop || robot_state == ROBOT_STOP) // 还需添加重要应用和模块离线的判断
     {
         robot_state = ROBOT_STOP;
         gimbal_cmd_send.gimbal_mode = GIMBAL_ZERO_FORCE;
@@ -388,8 +390,9 @@ static void EmergencyHandler()
         shoot_cmd_send.shoot_state = BOOSTER_DISABLE; // 急停:发射机构失能(含飞轮)
         LOGERROR("[CMD] emergency stop!");
     }
-    // 遥控器右侧开关为[上],恢复正常运行(发射机构状态由各输入处理函数决定,不在此强制使能)
-    if (switch_is_up(rc_data[TEMP].rc.switch_right))
+    // 恢复运行: 遥控器右侧开关为[上], 或 键鼠 Shift+X 组合键(等效右拨杆上拨)
+    // 发射机构状态由各输入处理函数决定,不在此强制使能
+    if (switch_is_up(rc_data[TEMP].rc.switch_right) || kb_ready)
     {
         robot_state = ROBOT_READY;
         LOGINFO("[CMD] reinstate, robot ready");
