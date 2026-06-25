@@ -246,7 +246,7 @@ static void ShootOutput()
     // 单发后回到停火由cmd负责(鼠标上升沿发SPOT一帧,之后即CEASEFIRE)
     case BOOSTER_SPOT:
         DJIMotorOuterLoop(loader, ANGLE_LOOP);                                       // 切换到角度环
-        DJIMotorSetRef(loader, loader->measure.total_angle - ONE_BULLET_DELTA_ANGLE); // 控制量增加一发弹丸的角度
+        DJIMotorSetRef(loader, loader->measure.total_angle - ONE_BULLET_DELTA_ANGLE * REDUCTION_RATIO_LOADER); // 控制量增加一发弹丸的角度
         hibernate_time = DWT_GetTimeline_ms();                                        // 记录触发指令的时间
         dead_time = 150;                                                              // 完成1发弹丸发射的时间
         break;

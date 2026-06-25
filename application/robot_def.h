@@ -34,7 +34,7 @@
 #define PITCH_GRAVITY_FF_COEF 3600.0f // pitch重力补偿前馈系数,电流单位,实测标定
 // 发射参数
 #define ONE_BULLET_DELTA_ANGLE 45.0f    // 发射一发弹丸拨盘转动的距离,由机械设计图纸给出
-#define HOLD_TO_BURST_TIME_MS 100.0f    // 鼠标左键按住超过此时长(ms)由单发切换为连发
+#define HOLD_TO_BURST_TIME_MS 0.0f    // 鼠标左键按住超过此时长(ms)由单发切换为连发
 #define REDUCTION_RATIO_LOADER 36.0f // 2006拨盘电机的减速比,英雄需要修改为3508的19.0f
 #define NUM_PER_CIRCLE 8            // 拨盘一圈的装载量
 // 机器人底盘修改的参数,单位为mm(毫米)
