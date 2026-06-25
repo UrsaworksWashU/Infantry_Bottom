@@ -310,6 +310,13 @@ static void MouseKeySet()
         gimbal_cmd_send.pitch +=  (float)rc_data[TEMP].mouse.y * 0.001f;
         gimbal_cmd_send.yaw_speed_ff   = 0.0f; // 键鼠模式无前馈
         gimbal_cmd_send.pitch_speed_ff = 0.0f;
+
+        // C键一键掉头: 上升沿触发,云台yaw目标翻转180°,底盘跟随云台->整车调头逃跑
+        static uint8_t c_key_last = 0;
+        uint8_t c_key_now = rc_data[TEMP].key[KEY_PRESS].c;
+        if (c_key_now && !c_key_last)
+            gimbal_cmd_send.yaw += 180.0f;
+        c_key_last = c_key_now;
         if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
         if (gimbal_cmd_send.pitch < PITCH_MIN_ANGLE) gimbal_cmd_send.pitch = PITCH_MIN_ANGLE;
 
