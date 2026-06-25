@@ -39,6 +39,7 @@ static RC_ctrl_t *rc_data;              // 遥控器数据,初始化时返回
 static Vision_Recv_s *vision_recv_data; // 视觉接收数据指针,初始化时返回
 static referee_info_t *referee_data;    // 裁判系统数据指针,用于读取实测弹速回传上位机
 static PressHoldFSM_t mouse_l_fsm;      // 鼠标左键"单点/长按"判断状态机,驱动单发/连发
+static PressHoldFSM_t mouse_r_fsm;      // 鼠标右键"长按"判断状态机,长按进入视觉自瞄模式
 // static Vision_Send_s vision_send_data;  // 视觉发送数据
 
 static Publisher_t *gimbal_cmd_pub;            // 云台控制消息发布者
@@ -129,8 +130,9 @@ void RobotCMDInit()
 
     referee_data = RefereeGetInfo(); // 获取裁判系统数据指针(串口由UI/chassis初始化,此处仅取指针)
 
-    // 鼠标左键单点/长按状态机:阈值由HOLD_TO_BURST_TIME_MS换算成周期数(RobotCMDTask 200Hz, 5ms/周期)
+    // 鼠标左右键长按状态机:阈值由HOLD_TO_BURST_TIME_MS换算成周期数(RobotCMDTask 200Hz, 5ms/周期)
     PressHoldFSM_Init(&mouse_l_fsm, (uint16_t)(HOLD_TO_BURST_TIME_MS / 5.0f));
+    PressHoldFSM_Init(&mouse_r_fsm, (uint16_t)(HOLD_TO_BURST_TIME_MS / 5.0f));
 }
 
 /**
@@ -145,6 +147,36 @@ static void CalcOffsetAngle()
     if (offset > 180.0f)  offset -= 360.0f;
     if (offset < -180.0f) offset += 360.0f;
     chassis_cmd_send.offset_angle = offset;
+}
+
+/**
+ * @brief 将上位机视觉目标解算为云台绝对角度与速度前馈,写入gimbal_cmd_send
+ *        供RC左拨杆中位视觉模式(RemoteControlSet)与键鼠长按右键视觉模式(MouseKeySet)共用
+ */
+static void VisionAimGimbal()
+{
+    gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
+    if (vision_recv_data->target_state != NO_TARGET)
+    {
+        float target_yaw = vision_recv_data->yaw * 57.2958f;   // absolute, (-180,180] deg
+        float err = target_yaw - gimbal_fetch_data.gimbal_imu_data.YawTotalAngle;
+        while (err >  180.0f) err -= 360.0f;                    // wrap to shortest path
+        while (err < -180.0f) err += 360.0f;
+        gimbal_cmd_send.yaw   = gimbal_fetch_data.gimbal_imu_data.YawTotalAngle + err;
+        gimbal_cmd_send.pitch = -vision_recv_data->pitch * 57.2958f;
+        // pitch软件限位,与remotecontrol一致,防止视觉给出超程角度
+        if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
+        if (gimbal_cmd_send.pitch < PITCH_MIN_ANGLE) gimbal_cmd_send.pitch = PITCH_MIN_ANGLE;
+        // 视觉轨迹规划器的速度前馈，rad/s -> deg/s，直接喂给云台速度环
+        // pitch与角度一致取负，保持方向定义统一
+        gimbal_cmd_send.yaw_speed_ff   =  vision_recv_data->yaw_vel   * 57.2958f;
+        gimbal_cmd_send.pitch_speed_ff = -vision_recv_data->pitch_vel * 57.2958f;
+    }
+    else
+    {
+        gimbal_cmd_send.yaw_speed_ff   = 0.0f; // 无目标，关闭前馈,云台保持当前角度
+        gimbal_cmd_send.pitch_speed_ff = 0.0f;
+    }
 }
 
 /**
@@ -167,16 +199,24 @@ static void RemoteControlSet()
         gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
     }
 
-    // Gimbal control coefficients, right stick horizontal for yaw, vertical for pitch
-    // horizontal controller stick negative left, positive right
-    gimbal_cmd_send.pitch +=  0.001f * (float)rc_data[TEMP].rc.rocker_r1; // r1 for horizontal direction
-    gimbal_cmd_send.yaw   += -0.005f * (float)rc_data[TEMP].rc.rocker_r_; // r for vertical direction
-    gimbal_cmd_send.yaw_speed_ff   = 0.0f; // 手动模式无前馈
-    gimbal_cmd_send.pitch_speed_ff = 0.0f;
-    // Put it here rather than gimbal.c so pitch can have continuous control when hitting the limit, 
-    // it doesn't need to counteract the exceeded values
-    if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
-    if (gimbal_cmd_send.pitch < PITCH_MIN_ANGLE) gimbal_cmd_send.pitch = PITCH_MIN_ANGLE;
+    // 云台控制: 左拨杆中位->听从视觉云台控制(与键鼠长按右键一致); 左拨杆下位->右摇杆手动控制
+    if (switch_is_mid(rc_data[TEMP].rc.switch_left))
+    {
+        VisionAimGimbal(); // 云台跟随上位机视觉目标
+    }
+    else
+    {
+        // Gimbal control coefficients, right stick horizontal for yaw, vertical for pitch
+        // horizontal controller stick negative left, positive right
+        gimbal_cmd_send.pitch +=  0.001f * (float)rc_data[TEMP].rc.rocker_r1; // r1 for horizontal direction
+        gimbal_cmd_send.yaw   += -0.005f * (float)rc_data[TEMP].rc.rocker_r_; // r for vertical direction
+        gimbal_cmd_send.yaw_speed_ff   = 0.0f; // 手动模式无前馈
+        gimbal_cmd_send.pitch_speed_ff = 0.0f;
+        // Put it here rather than gimbal.c so pitch can have continuous control when hitting the limit,
+        // it doesn't need to counteract the exceeded values
+        if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
+        if (gimbal_cmd_send.pitch < PITCH_MIN_ANGLE) gimbal_cmd_send.pitch = PITCH_MIN_ANGLE;
+    }
 
     // Chassis control coefficients, left stick vertical for forward/backward, horizontal for left/right
     // Negative sign to align controller output with RHR(right hand rule: x forward, y left, wz counterclockwise positive)
@@ -190,48 +230,19 @@ static void RemoteControlSet()
         ; // 弹舱舵机控制,待添加servo_motor模块,关闭
 
     // 发射机构状态控制(拨轮向上打为负): 回中失能, 上拨过半停火(飞轮常转), 上拨到底连发
-    if (rc_data[TEMP].rc.dial < -500) // 上拨到底: 连发
+    //   左拨杆[中](视觉): 需拨轮到底 且 上位机判定可开火(READY_TO_FIRE) 才连发
+    //   左拨杆[下](手动): 拨轮到底直接连发
+    uint8_t dial_to_bottom = (rc_data[TEMP].rc.dial < -500);
+    uint8_t fire = switch_is_mid(rc_data[TEMP].rc.switch_left)
+                       ? (dial_to_bottom && vision_recv_data->target_state == READY_TO_FIRE)
+                       : dial_to_bottom;
+    if (fire) // 上拨到底(中位还需视觉允许): 连发
         shoot_cmd_send.shoot_state = BOOSTER_AUTO;
     else if (rc_data[TEMP].rc.dial < 100) // 上拨过半: 飞轮常转,不发弹
         shoot_cmd_send.shoot_state = BOOSTER_CEASEFIRE;
     else // 回中: 失能,飞轮停
         shoot_cmd_send.shoot_state = BOOSTER_DISABLE;
 }
-
-/**
- * @brief 控制输入为视觉上位机时的模式和控制量设置
- *
- */
-  static void VisionControlSet()
-  {
-      gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
-      chassis_cmd_send.chassis_mode = CHASSIS_NO_FOLLOW; 
-      if (vision_recv_data->target_state != NO_TARGET)
-      {
-          float target_yaw = vision_recv_data->yaw * 57.2958f;   // absolute, (-180,180] deg
-          float err = target_yaw - gimbal_fetch_data.gimbal_imu_data.YawTotalAngle;
-          while (err >  180.0f) err -= 360.0f;                    // wrap to shortest path
-          while (err < -180.0f) err += 360.0f;
-          gimbal_cmd_send.yaw   = gimbal_fetch_data.gimbal_imu_data.YawTotalAngle + err;
-          gimbal_cmd_send.pitch = -vision_recv_data->pitch * 57.2958f;
-          // 视觉轨迹规划器的速度前馈，rad/s -> deg/s，直接喂给云台速度环
-          // pitch与角度一致取负，保持方向定义统一
-          gimbal_cmd_send.yaw_speed_ff   =  vision_recv_data->yaw_vel   * 57.2958f;
-          gimbal_cmd_send.pitch_speed_ff = -vision_recv_data->pitch_vel * 57.2958f;
-      }
-      else
-      {
-          gimbal_cmd_send.yaw_speed_ff   = 0.0f; // 无目标，关闭前馈
-          gimbal_cmd_send.pitch_speed_ff = 0.0f;
-      }
-        // 发射机构状态控制(拨轮向上打为负): 上拨到底且视觉判定可开火->连发, 上拨过半->飞轮常转待发, 回中->失能
-        if (rc_data[TEMP].rc.dial < -500 && vision_recv_data->target_state == READY_TO_FIRE)
-            shoot_cmd_send.shoot_state = BOOSTER_AUTO;
-        else if (rc_data[TEMP].rc.dial < 100)
-            shoot_cmd_send.shoot_state = BOOSTER_CEASEFIRE;
-        else
-            shoot_cmd_send.shoot_state = BOOSTER_DISABLE;
-        }
 
 /**
  * @brief 输入为键鼠时模式和控制量设置
@@ -258,37 +269,41 @@ static void MouseKeySet()
         chassis_cmd_send.chassis_mode = CHASSIS_FOLLOW_GIMBAL_YAW;
     }
 
-    gimbal_cmd_send.yaw   += -(float)rc_data[TEMP].mouse.x * 0.005f;
-    gimbal_cmd_send.pitch +=  (float)rc_data[TEMP].mouse.y * 0.001f;
-    gimbal_cmd_send.yaw_speed_ff   = 0.0f; // 键鼠模式无前馈
-    gimbal_cmd_send.pitch_speed_ff = 0.0f;
-    if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
-    if (gimbal_cmd_send.pitch < PITCH_MIN_ANGLE) gimbal_cmd_send.pitch = PITCH_MIN_ANGLE;
-
-    // switch (rc_data[TEMP].key_count[KEY_PRESS][Key_Z] % 3) // Z键设置弹速
-    // {
-    // case 0:
-    //     shoot_cmd_send.bullet_speed = 15;
-    //     break;
-    // case 1:
-    //     break;
-    // default:
-    //     shoot_cmd_send.bullet_speed = 30;
-    //     break;
-    // }
-    // 鼠标左键发射控制(由单点/长按状态机驱动发射机构状态机):
-    //   单点(短按即松)->BOOSTER_SPOT单发(仅一帧,shoot应用走完一发并进入不应期后由本处回停火)
-    //   长按(超过阈值)->BOOSTER_AUTO连发
-    //   单点和连发都能从失能态唤醒(离开BOOSTER_DISABLE);
-    //   松开且已激活->BOOSTER_CEASEFIRE停火(飞轮保持转);无输入且仍失能->保持失能
+    // 鼠标左右键长按状态机更新: 左键长按->连发, 右键长按->视觉自瞄模式
     PressHoldFSM_Update(&mouse_l_fsm, rc_data[TEMP].mouse.press_l);
+    PressHoldFSM_Update(&mouse_r_fsm, rc_data[TEMP].mouse.press_r);
+    uint8_t vision_mode = PressHoldFSM_IsHold(&mouse_r_fsm); // 长按右键->进入视觉模式
+    uint8_t left_hold   = PressHoldFSM_IsHold(&mouse_l_fsm); // 长按左键->连发
 
-    if (PressHoldFSM_IsHold(&mouse_l_fsm)) // 长按->连发
-        shoot_cmd_send.shoot_state = BOOSTER_AUTO;
-    // else if (PressHoldFSM_IsClick(&mouse_l_fsm)) // 单点->单发(仅维持一帧)
-    //     shoot_cmd_send.shoot_state = BOOSTER_SPOT;
-    else if (shoot_cmd_send.shoot_state != BOOSTER_DISABLE) // 已激活:松开->停火
-        shoot_cmd_send.shoot_state = BOOSTER_CEASEFIRE;
+    if (vision_mode)
+    {
+        // 长按右键: 进入视觉模式, 云台跟随上位机目标(底盘仍由键盘WASD控制,不切NO_FOLLOW)
+        VisionAimGimbal();
+        // 视觉模式发射:
+        //   上位机判定可开火(READY_TO_FIRE) -> 自动连发, 跟随视觉目标, 无需第二个键触发
+        //   或 长按左键 -> 连发(手动覆盖, 不依赖上位机fire允许, 预防视觉/上位机失效)
+        //   否则 -> 飞轮常转待命(进入视觉模式即激活, 保证开火时飞轮已到速)
+        if (left_hold || vision_recv_data->target_state == READY_TO_FIRE)
+            shoot_cmd_send.shoot_state = BOOSTER_AUTO;
+        else
+            shoot_cmd_send.shoot_state = BOOSTER_CEASEFIRE;
+    }
+    else
+    {
+        // 普通键鼠模式: 鼠标移动控制云台
+        gimbal_cmd_send.yaw   += -(float)rc_data[TEMP].mouse.x * 0.005f;
+        gimbal_cmd_send.pitch +=  (float)rc_data[TEMP].mouse.y * 0.001f;
+        gimbal_cmd_send.yaw_speed_ff   = 0.0f; // 键鼠模式无前馈
+        gimbal_cmd_send.pitch_speed_ff = 0.0f;
+        if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
+        if (gimbal_cmd_send.pitch < PITCH_MIN_ANGLE) gimbal_cmd_send.pitch = PITCH_MIN_ANGLE;
+
+        // 鼠标左键: 长按->连发(从失能态唤醒); 松开且已激活->停火(飞轮常转)
+        if (left_hold)
+            shoot_cmd_send.shoot_state = BOOSTER_AUTO;
+        else if (shoot_cmd_send.shoot_state != BOOSTER_DISABLE)
+            shoot_cmd_send.shoot_state = BOOSTER_CEASEFIRE;
+    }
 
     if (rc_data[TEMP].key[KEY_PRESS].f) // F键:手动失能发射机构(停飞轮),需重新点击鼠标才再次激活
     {
@@ -383,12 +398,10 @@ void RobotCMDTask()
     // 根据gimbal的反馈值计算云台和底盘正方向的夹角,不需要传参,通过static私有变量完成
     CalcOffsetAngle();
     // 根据遥控器左侧开关,确定当前使用的控制模式为遥控器调试还是键鼠
-    if (switch_is_down(rc_data[TEMP].rc.switch_left)) // 遥控器左侧开关状态为[下],遥控器控制
-        RemoteControlSet();
-    else if (switch_is_mid(rc_data[TEMP].rc.switch_left)) // 遥控器左侧开关状态为[中],视觉模式
-        VisionControlSet();
-    else if (switch_is_up(rc_data[TEMP].rc.switch_left)) // 遥控器左侧开关状态为[上],键盘控制
+    if (switch_is_up(rc_data[TEMP].rc.switch_left)) // 左侧开关[上]:键盘鼠标控制
         MouseKeySet();
+    else // 左侧开关[中]或[下]:遥控器控制(中位时云台听从视觉,下位时摇杆手动)
+        RemoteControlSet();
 
     EmergencyHandler(); // 处理模块离线和遥控器急停等紧急情况
 
