@@ -4,6 +4,7 @@
 // module
 #include "remote_control.h"
 #include "press_hold_fsm.h"
+#include "slope.h"
 #include "ins_task.h"
 #include "master_process.h"
 #include "message_center.h"
@@ -21,6 +22,11 @@
 
 // 裁判系统首发前弹速为0,回传上位机的名义弹速默认值(m/s),17mm弹丸常用22m/s
 #define DEFAULT_BULLET_SPEED 22.0f
+
+// 键盘WASD底盘速度斜坡规划参数(RobotCMDTask 200Hz, 5ms/周期)
+#define CHASSIS_KB_MAX_SPEED  3000.0f // 键盘底盘最大速度(斜坡目标上限),可调
+#define CHASSIS_KB_ACCEL_STEP 8.0f    // 每周期加速步长(≈0.6s加到顶速),越大越快到顶
+#define CHASSIS_KB_DECEL_STEP 30.0f   // 每周期减速步长(松键刹停,通常比加速大)
 
 /* cmd应用包含的模块实例指针和交互信息存储*/
 #ifdef GIMBAL_BOARD // 对双板的兼容,条件编译
@@ -40,6 +46,8 @@ static Vision_Recv_s *vision_recv_data; // 视觉接收数据指针,初始化时
 static referee_info_t *referee_data;    // 裁判系统数据指针,用于读取实测弹速回传上位机
 static PressHoldFSM_t mouse_l_fsm;      // 鼠标左键"单点/长按"判断状态机,驱动单发/连发
 static PressHoldFSM_t mouse_r_fsm;      // 鼠标右键"长按"判断状态机,长按进入视觉自瞄模式
+static SlopeInstance chassis_vx_slope;  // 键盘WASD前后速度斜坡(按键越久越快)
+static SlopeInstance chassis_vy_slope;  // 键盘WASD左右速度斜坡
 // static Vision_Send_s vision_send_data;  // 视觉发送数据
 
 static Publisher_t *gimbal_cmd_pub;            // 云台控制消息发布者
@@ -133,6 +141,10 @@ void RobotCMDInit()
     // 鼠标左右键长按状态机:阈值由HOLD_TO_BURST_TIME_MS换算成周期数(RobotCMDTask 200Hz, 5ms/周期)
     PressHoldFSM_Init(&mouse_l_fsm, (uint16_t)(HOLD_TO_BURST_TIME_MS / 5.0f));
     PressHoldFSM_Init(&mouse_r_fsm, (uint16_t)(HOLD_TO_BURST_TIME_MS / 5.0f));
+
+    // 键盘底盘速度斜坡:松键(目标0)用更大的减速步长,实现缓加速、快刹停
+    SlopeInit(&chassis_vx_slope, CHASSIS_KB_ACCEL_STEP, CHASSIS_KB_DECEL_STEP, SLOPE_FIRST_PLANNING);
+    SlopeInit(&chassis_vy_slope, CHASSIS_KB_ACCEL_STEP, CHASSIS_KB_DECEL_STEP, SLOPE_FIRST_PLANNING);
 }
 
 /**
@@ -253,8 +265,11 @@ static void MouseKeySet()
     gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
     chassis_cmd_send.chassis_mode = CHASSIS_FOLLOW_GIMBAL_YAW;
 
-    chassis_cmd_send.vx = 1000.0f * (float)rc_data[TEMP].key[KEY_PRESS].w - 1000.0f * (float)rc_data[TEMP].key[KEY_PRESS].s; // 系数待测
-    chassis_cmd_send.vy = 1000.0f * (float)rc_data[TEMP].key[KEY_PRESS].d - 1000.0f * (float)rc_data[TEMP].key[KEY_PRESS].a;
+    // 键盘WASD底盘速度:目标值为±最大速度,经斜坡规划平滑逼近,实现"按得越久越快"、松键平滑刹停
+    float target_vx = CHASSIS_KB_MAX_SPEED * ((float)rc_data[TEMP].key[KEY_PRESS].w - (float)rc_data[TEMP].key[KEY_PRESS].s);
+    float target_vy = CHASSIS_KB_MAX_SPEED * ((float)rc_data[TEMP].key[KEY_PRESS].d - (float)rc_data[TEMP].key[KEY_PRESS].a);
+    chassis_cmd_send.vx = SlopeCalc(&chassis_vx_slope, target_vx);
+    chassis_cmd_send.vy = SlopeCalc(&chassis_vy_slope, target_vy);
 
     if (rc_data[TEMP].key[KEY_PRESS].q) 
     {
