@@ -163,6 +163,7 @@ typedef struct
     float pitch_speed_ff; // pitch速度前馈，deg/s，来自视觉轨迹规划器(非视觉模式置0)
 
     gimbal_mode_e gimbal_mode;
+    uint8_t vision_state; // 视觉目标状态透传(0=无目标,1=收敛中,2=可开火),仅供UI显示AUTOAIM状态,对应Target_State_e
 } Gimbal_Ctrl_Cmd_s;
 
 // cmd发布的发射控制数据,由shoot订阅

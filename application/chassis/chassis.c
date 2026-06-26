@@ -38,6 +38,10 @@ attitude_t *Chassis_IMU_data;
 #ifdef ONE_BOARD
 static Publisher_t *chassis_pub;                    // 用于发布底盘的数据
 static Subscriber_t *chassis_sub;                   // 用于订阅底盘的控制命令
+static Subscriber_t *gimbal_cmd_sub;                // 订阅云台cmd,仅用于UI显示云台模式
+static Subscriber_t *shoot_cmd_sub;                 // 订阅发射cmd,仅用于UI显示发射状态
+static Gimbal_Ctrl_Cmd_s gimbal_cmd_recv;           // 云台控制命令,仅用于UI
+static Shoot_Ctrl_Cmd_s shoot_cmd_recv;             // 发射控制命令,仅用于UI
 #endif                                              // !ONE_BOARD
 static Chassis_Ctrl_Cmd_s chassis_cmd_recv;         // 底盘接收到的控制命令
 static Chassis_Upload_Data_s chassis_feedback_data; // 底盘回传的反馈数据
@@ -161,6 +165,9 @@ void ChassisInit()
 #ifdef ONE_BOARD // 单板控制整车,则通过pubsub来传递消息
     chassis_sub = SubRegister("chassis_cmd", sizeof(Chassis_Ctrl_Cmd_s));
     chassis_pub = PubRegister("chassis_feed", sizeof(Chassis_Upload_Data_s));
+    // 额外订阅云台/发射cmd,仅用于在裁判系统UI上显示真实模式(底盘板挂着裁判系统串口)
+    gimbal_cmd_sub = SubRegister("gimbal_cmd", sizeof(Gimbal_Ctrl_Cmd_s));
+    shoot_cmd_sub = SubRegister("shoot_cmd", sizeof(Shoot_Ctrl_Cmd_s));
 #endif // ONE_BOARD
 }
 
@@ -219,6 +226,24 @@ static void EstimateSpeed()
     // 根据电机速度和陀螺仪的角速度进行解算,还可以利用加速度计判断是否打滑(如果有)
     // chassis_feedback_data.vx vy wz =
     //  ...
+}
+
+/* 将真实机器状态喂入UI数据结构,referee_task会自动检测变化并刷新对应UI(比赛显示) */
+static void FeedUIData(void)
+{
+#ifdef ONE_BOARD
+    SubGetMessage(gimbal_cmd_sub, &gimbal_cmd_recv);
+    SubGetMessage(shoot_cmd_sub, &shoot_cmd_recv);
+    ui_data.gimbal_mode = gimbal_cmd_recv.gimbal_mode;
+    ui_data.vision_state = gimbal_cmd_recv.vision_state; // 视觉目标状态(随gimbal_cmd透传)
+    // 发射状态机(BOOSTER_*)映射到UI的开关量: 飞轮在非DISABLE时常转; SPOT/AUTO视为正在发射
+    ui_data.friction_mode = (shoot_cmd_recv.shoot_state == BOOSTER_DISABLE) ? FRICTION_OFF : FRICTION_ON;
+    ui_data.shoot_mode = (shoot_cmd_recv.shoot_state == BOOSTER_SPOT || shoot_cmd_recv.shoot_state == BOOSTER_AUTO) ? SHOOT_ON : SHOOT_OFF;
+    ui_data.lid_mode = shoot_cmd_recv.lid_mode;
+#endif
+    ui_data.chassis_mode = chassis_cmd_recv.chassis_mode;
+    // 2026赛季0x0202仅保留缓冲能量,复用chassis_power_mx字段承载buffer_energy(J)
+    ui_data.Chassis_Power_Data.chassis_power_mx = referee_data->PowerHeatData.buffer_energy;
 }
 
 /* 机器人底盘控制核心任务 */
@@ -293,6 +318,9 @@ void ChassisTask()
     // // 当前只做了17mm热量的数据获取,后续根据robot_def中的宏切换双枪管和英雄42mm的情况
     // chassis_feedback_data.bullet_speed = referee_data->GameRobotState.shooter_id1_17mm_speed_limit;
     // chassis_feedback_data.rest_heat = referee_data->PowerHeatData.shooter_heat0;
+
+    // 更新裁判系统UI显示的真实机器状态
+    FeedUIData();
 
     // 推送反馈消息
 #ifdef ONE_BOARD

@@ -519,5 +519,6 @@ void RobotCMDTask()
     CANCommSend(cmd_can_comm, (void *)&chassis_cmd_send);
 #endif // GIMBAL_BOARD
     PubPushMessage(shoot_cmd_pub, (void *)&shoot_cmd_send);
+    gimbal_cmd_send.vision_state = (uint8_t)vision_recv_data->target_state; // 透传视觉目标状态供UI显示
     PubPushMessage(gimbal_cmd_pub, (void *)&gimbal_cmd_send);
 }

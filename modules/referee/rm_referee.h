@@ -52,6 +52,7 @@ typedef struct
 	uint32_t lid_flag : 1;
 	uint32_t friction_flag : 1;
 	uint32_t Power_flag : 1;
+	uint32_t vision_flag : 1;
 } Referee_Interactive_Flag_t;
 
 // 此结构体包含UI绘制与机器人车间通信的需要的其他非裁判系统数据
@@ -65,6 +66,7 @@ typedef struct
 	friction_mode_e friction_mode;			 // 摩擦轮关闭
 	lid_mode_e lid_mode;					 // 弹舱盖打开
 	Chassis_Power_Data_s Chassis_Power_Data; // 功率控制
+	uint8_t vision_state;					 // 视觉目标状态(0=无目标,1=收敛中,2=可开火),对应Target_State_e
 
 	// 上一次的模式，用于flag判断
 	chassis_mode_e chassis_last_mode;
@@ -73,6 +75,7 @@ typedef struct
 	friction_mode_e friction_last_mode;
 	lid_mode_e lid_last_mode;
 	Chassis_Power_Data_s Chassis_last_Power_Data;
+	uint8_t vision_last_state;
 
 } Referee_Interactive_info_t;
 
