@@ -15,6 +15,7 @@
 // bsp
 #include "bsp_dwt.h"
 #include "bsp_log.h"
+#include <math.h>
 
 // 私有宏,自动将编码器转换成角度值
 #define YAW_ALIGN_ANGLE (YAW_CHASSIS_ALIGN_ECD * ECD_ANGLE_COEF_DJI) // 对齐时的角度,0-360
@@ -27,6 +28,11 @@
 #define CHASSIS_KB_MAX_SPEED  3000.0f // 键盘底盘最大速度(斜坡目标上限),可调
 #define CHASSIS_KB_ACCEL_STEP 8.0f    // 每周期加速步长(≈0.6s加到顶速),越大越快到顶
 #define CHASSIS_KB_DECEL_STEP 30.0f   // 每周期减速步长(松键刹停,通常比加速大)
+
+// 哨兵模式(长按V): 底盘变速小陀螺 + 云台yaw慢速扫描 + pitch上下摆动, 视觉发现敌人则交给视觉
+#define SENTRY_YAW_SCAN_STEP    0.6f  // 云台yaw每周期扫描步进(deg), 200Hz下≈40deg/s, 越大转越快
+#define SENTRY_PITCH_FREQ       0.4f  // pitch上下摆动频率(Hz), 周期≈2.5s
+#define SENTRY_PITCH_RANGE_RATE 0.8f  // pitch摆动幅度占可用行程的比例(<1, 防止打到软件限位)
 
 /* cmd应用包含的模块实例指针和交互信息存储*/
 #ifdef GIMBAL_BOARD // 对双板的兼容,条件编译
@@ -46,6 +52,7 @@ static Vision_Recv_s *vision_recv_data; // 视觉接收数据指针,初始化时
 static referee_info_t *referee_data;    // 裁判系统数据指针,用于读取实测弹速回传上位机
 static PressHoldFSM_t mouse_l_fsm;      // 鼠标左键"单点/长按"判断状态机,驱动单发/连发
 static PressHoldFSM_t mouse_r_fsm;      // 鼠标右键"长按"判断状态机,长按进入视觉自瞄模式
+static PressHoldFSM_t sentry_fsm;       // V键"长按"判断状态机,长按进入哨兵自旋扫描模式
 static SlopeInstance chassis_vx_slope;  // 键盘WASD前后速度斜坡(按键越久越快)
 static SlopeInstance chassis_vy_slope;  // 键盘WASD左右速度斜坡
 // static Vision_Send_s vision_send_data;  // 视觉发送数据
@@ -141,6 +148,7 @@ void RobotCMDInit()
     // 鼠标左右键长按状态机:阈值由HOLD_TO_BURST_TIME_MS换算成周期数(RobotCMDTask 200Hz, 5ms/周期)
     PressHoldFSM_Init(&mouse_l_fsm, (uint16_t)(HOLD_TO_BURST_TIME_MS / 5.0f));
     PressHoldFSM_Init(&mouse_r_fsm, (uint16_t)(HOLD_TO_BURST_TIME_MS / 5.0f));
+    PressHoldFSM_Init(&sentry_fsm, (uint16_t)(HOLD_TO_BURST_TIME_MS / 5.0f)); // V键长按进哨兵模式
 
     // 键盘底盘速度斜坡:松键(目标0)用更大的减速步长,实现缓加速、快刹停
     SlopeInit(&chassis_vx_slope, CHASSIS_KB_ACCEL_STEP, CHASSIS_KB_DECEL_STEP, SLOPE_FIRST_PLANNING);
@@ -188,6 +196,46 @@ static void VisionAimGimbal()
     {
         gimbal_cmd_send.yaw_speed_ff   = 0.0f; // 无目标，关闭前馈,云台保持当前角度
         gimbal_cmd_send.pitch_speed_ff = 0.0f;
+    }
+}
+
+/**
+ * @brief 哨兵模式(键鼠长按V): 底盘持续变速小陀螺, 云台yaw慢速扫描+pitch上下摆动巡逻;
+ *        一旦视觉发现敌人, 云台与射击交给视觉(自动跟随/开火); 目标丢失则恢复巡逻扫描。
+ */
+static void SentryMode()
+{
+    // 底盘: 持续变速小陀螺(转速正弦波动在chassis.c中实现), 仍保留WASD平移以便转移阵地
+    chassis_cmd_send.chassis_mode = CHASSIS_ROTATE_CLOCKWISE;
+    float target_vx = CHASSIS_KB_MAX_SPEED * ((float)rc_data[TEMP].key[KEY_PRESS].w - (float)rc_data[TEMP].key[KEY_PRESS].s);
+    float target_vy = CHASSIS_KB_MAX_SPEED * ((float)rc_data[TEMP].key[KEY_PRESS].d - (float)rc_data[TEMP].key[KEY_PRESS].a);
+    chassis_cmd_send.vx = SlopeCalc(&chassis_vx_slope, target_vx);
+    chassis_cmd_send.vy = SlopeCalc(&chassis_vy_slope, target_vy);
+
+    gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
+
+    if (vision_recv_data->target_state != NO_TARGET)
+    {
+        // 发现敌人: 云台跟随上位机目标, 满足开火条件则连发, 否则飞轮常转待命
+        VisionAimGimbal();
+        if (vision_recv_data->target_state == READY_TO_FIRE)
+            shoot_cmd_send.shoot_state = BOOSTER_AUTO;
+        else
+            shoot_cmd_send.shoot_state = BOOSTER_CEASEFIRE;
+    }
+    else
+    {
+        // 无目标: 巡逻扫描。yaw按固定步进持续旋转, pitch在可用行程内正弦上下摆动
+        gimbal_cmd_send.yaw += SENTRY_YAW_SCAN_STEP;
+        float t = DWT_GetTimeline_ms() / 1000.0f;
+        float pitch_center = (PITCH_MAX_ANGLE + PITCH_MIN_ANGLE) * 0.5f;
+        float pitch_amp    = (PITCH_MAX_ANGLE - PITCH_MIN_ANGLE) * 0.5f * SENTRY_PITCH_RANGE_RATE;
+        gimbal_cmd_send.pitch = pitch_center + pitch_amp * sinf(2.0f * 3.1415926f * SENTRY_PITCH_FREQ * t);
+        if (gimbal_cmd_send.pitch > PITCH_MAX_ANGLE) gimbal_cmd_send.pitch = PITCH_MAX_ANGLE;
+        if (gimbal_cmd_send.pitch < PITCH_MIN_ANGLE) gimbal_cmd_send.pitch = PITCH_MIN_ANGLE;
+        gimbal_cmd_send.yaw_speed_ff   = 0.0f;
+        gimbal_cmd_send.pitch_speed_ff = 0.0f;
+        shoot_cmd_send.shoot_state = BOOSTER_CEASEFIRE; // 飞轮常转待命, 发现目标即可立刻开火
     }
 }
 
@@ -262,6 +310,14 @@ static void RemoteControlSet()
  */
 static void MouseKeySet()
 {
+    // 长按V: 进入哨兵模式(自旋+云台扫描, 视觉发现敌人则交给视觉), 优先级最高, 直接接管并返回
+    PressHoldFSM_Update(&sentry_fsm, rc_data[TEMP].key[KEY_PRESS].v);
+    if (PressHoldFSM_IsHold(&sentry_fsm))
+    {
+        SentryMode();
+        return;
+    }
+
     gimbal_cmd_send.gimbal_mode = GIMBAL_ANGLE_MODE;
     chassis_cmd_send.chassis_mode = CHASSIS_FOLLOW_GIMBAL_YAW;
 

@@ -53,8 +53,8 @@ static DJIMotorInstance *motor_lf, *motor_rf, *motor_lb, *motor_rb; // left righ
 /* 变速小陀螺(随机/正弦变速自旋)参数:转速在 BASE±AMP 之间按正弦波动,
    让底盘相对云台的角位置不可预测,降低被命中概率。AMP < BASE 保证不反向、不停转。 */
 #define SPIN_WZ_BASE 800.0f // 自旋基准转速幅值(原定值)
-#define SPIN_WZ_AMP  250.0f // 正弦变速幅度(wz 在 550~1050 之间摆动)
-#define SPIN_WZ_FREQ 0.6f   // 变速频率(Hz),周期≈1.7s,越大变速越急促
+#define SPIN_WZ_AMP  0.0f // 正弦变速幅度(wz 在 550~1050 之间摆动)
+#define SPIN_WZ_FREQ 0.0f   // 变速频率(Hz),周期≈1.7s,越大变速越急促
 
 /**
  * @brief 变速小陀螺:返回随时间正弦波动的自旋转速幅值(始终为正)
