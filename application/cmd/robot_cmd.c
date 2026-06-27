@@ -298,7 +298,7 @@ static void RemoteControlSet()
                        : dial_to_bottom;
     if (fire) // 上拨到底(中位还需视觉允许): 连发
         shoot_cmd_send.shoot_state = BOOSTER_AUTO;
-    else if (rc_data[TEMP].rc.dial < 100) // 上拨过半: 飞轮常转,不发弹
+    else if (rc_data[TEMP].rc.dial < -100) 
         shoot_cmd_send.shoot_state = BOOSTER_CEASEFIRE;
     else // 回中: 失能,飞轮停
         shoot_cmd_send.shoot_state = BOOSTER_DISABLE;
@@ -445,7 +445,9 @@ static void EmergencyHandler()
     // 急停触发: 遥控器拨轮向下拨过半(向下打时拨轮为正), 或 键鼠 Ctrl+X 组合键(等效拨轮下拨)
     uint8_t kb_stop  = rc_data[TEMP].key[KEY_PRESS_WITH_CTRL].x;  // Ctrl+X -> 失能
     uint8_t kb_ready = rc_data[TEMP].key[KEY_PRESS_WITH_SHIFT].x; // Shift+X -> 使能
-    if (rc_data[TEMP].rc.dial > 300 || kb_stop || robot_state == ROBOT_STOP) // 还需添加重要应用和模块离线的判断
+    // 遥控器离线急停: 离线时遥控器数据全为0,会被误判成"拨轮过半->飞轮常转",故离线必须强制失能
+    uint8_t rc_offline = !RemoteControlIsOnline();
+    if (rc_offline || rc_data[TEMP].rc.dial > 300 || kb_stop || robot_state == ROBOT_STOP)
     {
         robot_state = ROBOT_STOP;
         gimbal_cmd_send.gimbal_mode = GIMBAL_ZERO_FORCE;
@@ -454,8 +456,8 @@ static void EmergencyHandler()
         LOGERROR("[CMD] emergency stop!");
     }
     // 恢复运行: 遥控器右侧开关为[上], 或 键鼠 Shift+X 组合键(等效右拨杆上拨)
-    // 发射机构状态由各输入处理函数决定,不在此强制使能
-    if (switch_is_up(rc_data[TEMP].rc.switch_right) || kb_ready)
+    // 发射机构状态由各输入处理函数决定,不在此强制使能;遥控器离线时禁止恢复
+    if (!rc_offline && (switch_is_up(rc_data[TEMP].rc.switch_right) || kb_ready))
     {
         robot_state = ROBOT_READY;
         LOGINFO("[CMD] reinstate, robot ready");

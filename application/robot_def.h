@@ -33,7 +33,7 @@
 #if isNewInfantry
 #define YAW_CHASSIS_ALIGN_ECD 7000  // 新车: 云台和底盘对齐指向相同方向时的电机编码器值
 #else
-#define YAW_CHASSIS_ALIGN_ECD 430   // 旧车: 云台和底盘对齐指向相同方向时的电机编码器值
+#define YAW_CHASSIS_ALIGN_ECD 494   // 旧车: 云台和底盘对齐指向相同方向时的电机编码器值
 #endif
 #define PITCH_HORIZON_ECD 7609      // 云台处于水平位置时编码器值,若对云台有机械改动需要修改
 #define PITCH_MAX_ANGLE 6.0f       // 云台竖直方向最大角度,陀螺仪deg,向上为正,根据机械限位实测后修改
