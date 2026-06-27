@@ -24,10 +24,17 @@
 #define VISION_USE_VCP  // 使用虚拟串口发送视觉数据
 // #define VISION_USE_UART // 使用串口发送视觉数据
 
+/* 两辆几乎相同的步兵的差异化参数开关: 1=新车, 0=旧车。编译烧录前按目标车设置,差异参数见下方#if isNewInfantry */
+#define isNewInfantry 0
+
 /* 机器人重要参数定义,注意根据不同机器人进行修改,浮点数需要以.0或f结尾,无符号以u结尾 */
 //TODO: change parameters according to the actual robot
 // 云台参数
-#define YAW_CHASSIS_ALIGN_ECD 430  // 云台和底盘对齐指向相同方向时的电机编码器值,若对云台有机械改动需要修改
+#if isNewInfantry
+#define YAW_CHASSIS_ALIGN_ECD 7000  // 新车: 云台和底盘对齐指向相同方向时的电机编码器值
+#else
+#define YAW_CHASSIS_ALIGN_ECD 430   // 旧车: 云台和底盘对齐指向相同方向时的电机编码器值
+#endif
 #define PITCH_HORIZON_ECD 7609      // 云台处于水平位置时编码器值,若对云台有机械改动需要修改
 #define PITCH_MAX_ANGLE 6.0f       // 云台竖直方向最大角度,陀螺仪deg,向上为正,根据机械限位实测后修改
 #define PITCH_MIN_ANGLE -10.0f      // 云台竖直方向最小角度,陀螺仪deg,向下为负,根据机械限位实测后修改
@@ -37,6 +44,14 @@
 #define HOLD_TO_BURST_TIME_MS 0.0f    // 鼠标左键按住超过此时长(ms)由单发切换为连发
 #define REDUCTION_RATIO_LOADER 36.0f // 2006拨盘电机的减速比,英雄需要修改为3508的19.0f
 #define NUM_PER_CIRCLE 8            // 拨盘一圈的装载量
+// 左右摩擦轮CAN tx_id(两车接线不同,对调即可)
+#if isNewInfantry
+#define FRICTION_L_TX_ID 2 // 新车: 左摩擦轮
+#define FRICTION_R_TX_ID 1 // 新车: 右摩擦轮
+#else
+#define FRICTION_L_TX_ID 1 // 旧车: 左摩擦轮
+#define FRICTION_R_TX_ID 2 // 旧车: 右摩擦轮
+#endif
 // 机器人底盘修改的参数,单位为mm(毫米)
 #define WHEEL_BASE 350              // 纵向轴距(前进后退方向)
 #define TRACK_WIDTH 300             // 横向轮距(左右平移方向)
