@@ -59,6 +59,8 @@ static void DeterminRobotID()
 
 static void MyUIRefresh(referee_info_t *referee_recv_info, Referee_Interactive_info_t *_Interactive_data);
 static void UIChangeCheck(Referee_Interactive_info_t *_Interactive_data); // 模式切换检测
+static void UIStaticDraw(void);                                           // 清屏并重绘全部图层(首次初始化与一键重置共用)
+static void UIForceRefreshAll(Referee_Interactive_info_t *_Interactive_data); // 作废last值,强制动态项刷新到当前真实状态
 #if UI_DEBUG_MODE_TEST
 static void RobotModeTest(Referee_Interactive_info_t *_Interactive_data); // 测试用函数，实现模式自动变化
 #endif
@@ -76,7 +78,28 @@ void UITask()
 #if UI_DEBUG_MODE_TEST
     RobotModeTest(Interactive_data); // 测试用函数，实现模式自动变化,用于检查该任务和裁判系统是否连接正常
 #endif
+    // 一键重置UI(R键): 清屏重绘全部静态图层, 并作废last值让动态项随后刷新回当前真实状态
+    if (Interactive_data->ui_reset_request)
+    {
+        UIStaticDraw();
+        UIForceRefreshAll(Interactive_data);
+        Interactive_data->ui_reset_request = 0;
+    }
     MyUIRefresh(referee_recv_info, Interactive_data);
+}
+
+// 作废"上一次"模式记录值,使UIChangeCheck在下一次刷新时判定各模式项均已改变,从而重绘到当前真实状态.
+// 配合UIStaticDraw使用: 静态重绘后模式项停留在默认文案(如"zeroforce"), 本函数确保它们被刷新成当前模式.
+// 注意: 缓冲能量条故意不在此强制刷新. 其静态重绘已是满格默认, 若在此作废last值会强制画出当前buffer,
+//       而裁判系统该字段在重连瞬间/未上线时常为0, 会让能量条被刷成空格. 保持与开机一致, 只在真实变化时更新.
+static void UIForceRefreshAll(Referee_Interactive_info_t *_Interactive_data)
+{
+    _Interactive_data->chassis_last_mode  = (chassis_mode_e)0xFF;
+    _Interactive_data->gimbal_last_mode   = (gimbal_mode_e)0xFF;
+    _Interactive_data->shoot_last_mode    = (shoot_mode_e)0xFF;
+    _Interactive_data->friction_last_mode = (friction_mode_e)0xFF;
+    _Interactive_data->lid_last_mode      = (lid_mode_e)0xFF;
+    _Interactive_data->vision_last_state  = 0xFF;
 }
 
 static Graph_Data_t UI_shoot_line[10]; // 射击准线
@@ -122,6 +145,12 @@ void MyUIInit()
     while (referee_recv_info->GameRobotState.robot_id == 0)
         osDelay(100); // 若还未收到裁判系统数据,等待一段时间后再检查
 
+    UIStaticDraw(); // 首次绘制全部图层
+}
+
+// 清屏并重绘全部静态+动态图层. 首次初始化调用; 一键重置(R键)时再次调用以恢复被裁判系统丢包吞掉的UI
+static void UIStaticDraw(void)
+{
     DeterminRobotID();                                            // 确定ui要发送到的目标客户端
     UIDelete(&referee_recv_info->referee_id, UI_Data_Del_ALL, 0); // 清空UI
 

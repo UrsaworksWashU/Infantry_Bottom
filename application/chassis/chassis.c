@@ -244,6 +244,9 @@ static void FeedUIData(void)
     ui_data.chassis_mode = chassis_cmd_recv.chassis_mode;
     // 2026赛季0x0202仅保留缓冲能量,复用chassis_power_mx字段承载buffer_energy(J)
     ui_data.Chassis_Power_Data.chassis_power_mx = referee_data->PowerHeatData.buffer_energy;
+    // 一键重置UI: cmd的脉冲请求latch到ui_data, 由UITask处理完整重绘后清零(脉冲只有1周期也不丢)
+    if (chassis_cmd_recv.ui_reset)
+        ui_data.ui_reset_request = 1;
 }
 
 /* 机器人底盘控制核心任务 */

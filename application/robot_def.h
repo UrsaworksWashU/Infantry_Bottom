@@ -163,7 +163,7 @@ typedef struct
     chassis_mode_e chassis_mode;
     int chassis_speed_buff;
     // UI部分
-    //  ...
+    uint8_t ui_reset; // 一键重置UI请求(脉冲): 裁判系统链路丢包导致静态UI被吞时, 重绘全部图层
 
 } Chassis_Ctrl_Cmd_s;
 

@@ -77,6 +77,8 @@ typedef struct
 	Chassis_Power_Data_s Chassis_last_Power_Data;
 	uint8_t vision_last_state;
 
+	uint8_t ui_reset_request; // 一键重置UI请求latch: cmd按键触发,UITask处理完整重绘后清零
+
 } Referee_Interactive_info_t;
 
 #pragma pack()

@@ -488,6 +488,12 @@ void RobotCMDTask()
 
     EmergencyHandler(); // 处理模块离线和遥控器急停等紧急情况
 
+    // R键一键重置UI: 上升沿触发,发一个脉冲请求给chassis->referee, 重绘被裁判系统丢包吞掉的静态UI
+    static uint8_t ui_reset_key_last = 0;
+    uint8_t ui_reset_key_now = rc_data[TEMP].key[KEY_PRESS].r;
+    chassis_cmd_send.ui_reset = (ui_reset_key_now && !ui_reset_key_last) ? 1 : 0;
+    ui_reset_key_last = ui_reset_key_now;
+
     // 设置视觉发送数据,还需增加加速度和角速度数据
     // VisionSetFlag(chassis_fetch_data.enemy_color, VISION_MODE_AIM, chassis_fetch_data.bullet_speed);
     VisionSetFlag(COLOR_RED, VISION_MODE_AIM, SMALL_AMU_15); // TODO: get color from referee
