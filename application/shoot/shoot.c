@@ -23,7 +23,7 @@ static referee_info_t *referee_data; // 裁判系统数据,用于读取枪口热
 static float hibernate_time = 0, dead_time = 0;
 
 // 连发目标射频(发/秒),仿中科大Target_Ammo_Shoot_Frequency,默认用此速度,可Ozone实时调
-static float target_ammo_shoot_frequency = 20.0f;
+static float target_ammo_shoot_frequency = 15.0f;
 
 volatile float dbg_loader_current_ref;
 volatile float dbg_loader_current_measure;
@@ -56,6 +56,17 @@ volatile uint8_t dbg_jam_status;        // Ozone观察卡弹状态
 // 发射机构状态由cmd经 shoot_cmd_recv.shoot_state 直接给定(robot_def.h: shoot_state_e),
 // 仿中科大Booster_Control_Type, 单一状态机, shoot层不再维护内部状态
 volatile uint8_t dbg_booster_type; // Ozone 观察发射机构状态(= shoot_cmd_recv.shoot_state)
+
+// 发射自检热量计算有限状态机, 仿中科大"无裁判系统热量检测算法"(slide 7.7)
+// 用摩擦轮扭矩电流突变检测每发实际出弹, 即时本地累加热量, 取代裁判系统延迟反馈
+typedef enum { HEAT_STOP = 0, HEAT_READY, HEAT_SUSPECT, HEAT_CONFIRM, HEAT_RELEASE } ShootHeatStatus_e;
+static ShootHeatStatus_e heat_status = HEAT_STOP;
+static float heat_status_enter_time = 0; // ms, 进入当前状态的时刻
+static float local_barrel_heat = 0;      // 本地估计的17mm枪口热量(中科大Qnow), 出弹即时累加, 按冷却衰减
+static float heat_last_calc_time = 0;    // 上次冷却衰减计算时刻(ms), 用于求dt
+volatile float dbg_local_heat;            // Ozone观察本地估计热量
+volatile uint8_t dbg_heat_status;         // Ozone观察热量检测状态机
+volatile float dbg_friction_fire_current; // Ozone观察用于出弹检测的摩擦轮扭矩电流(标定阈值用)
 
 void ShootInit()
 {
@@ -186,6 +197,91 @@ static void ShootJamFSM(void)
     }
 }
 
+/**
+ * @brief 发射自检热量计算FSM, 仿中科大"无裁判系统热量检测算法"
+ * @note  每个ShootTask周期调用一次, 完成两件事:
+ *        1) 状态机: 摩擦轮就绪 -> 检测扭矩电流突变(发射嫌疑) -> 持续达阈值时长(确认发射) -> Qnow += 每发热量
+ *           -> 等本发电流回落(防同一发重复计数) -> 回到就绪. 摩擦轮失能/掉速则回停机.
+ *        2) 善后: 按裁判系统冷却速率对Qnow做时间衰减(Qnow -= Qcd*dt), 与状态机解耦, 始终执行.
+ *        最后用裁判系统实测热量作"安全下限": 本地漏检时不会低于裁判系统已确认热量, 避免超限罚款.
+ */
+static void ShootHeatSetStatus(ShootHeatStatus_e s)
+{
+    heat_status = s;
+    heat_status_enter_time = DWT_GetTimeline_ms();
+}
+
+static void ShootHeatFSM(void)
+{
+    float now = DWT_GetTimeline_ms();
+
+    // 出弹检测量: 一发弹丸同时挤过两摩擦轮, 取两者扭矩电流绝对值较大者(最敏感)
+    float cl = fabsf((float)friction_l->measure.real_current);
+    float cr = fabsf((float)friction_r->measure.real_current);
+    float fire_cur = (cl > cr) ? cl : cr;
+    dbg_friction_fire_current = fire_cur;
+
+    // 飞轮是否就绪: 非失能态且两轮均达到目标转速附近, 否则无法可靠检测出弹
+    uint8_t friction_ready = (shoot_cmd_recv.shoot_state != BOOSTER_DISABLE) &&
+                             (fabsf(friction_l->measure.speed_aps) >= FRICTION_READY_SPEED_APS) &&
+                             (fabsf(friction_r->measure.speed_aps) >= FRICTION_READY_SPEED_APS);
+
+    switch (heat_status)
+    {
+    case HEAT_STOP:
+        // 停机: 摩擦轮第一次加速到目标速度附近 -> 准备检测
+        if (friction_ready)
+            ShootHeatSetStatus(HEAT_READY);
+        break;
+    case HEAT_READY:
+        // 准备检测: 扭矩电流突增 -> 发射嫌疑; 飞轮掉速 -> 回停机
+        if (!friction_ready)
+            ShootHeatSetStatus(HEAT_STOP);
+        else if (fire_cur >= FRICTION_FIRE_CURRENT_THRESHOLD)
+            ShootHeatSetStatus(HEAT_SUSPECT);
+        break;
+    case HEAT_SUSPECT:
+        // 发射嫌疑: 持续大扭矩达时间阈值 -> 确认发射; 时间不够即回落 -> 视为毛刺退回
+        if (fire_cur < FRICTION_FIRE_CURRENT_THRESHOLD)
+            ShootHeatSetStatus(HEAT_READY);
+        else if (now - heat_status_enter_time >= FRICTION_FIRE_CONFIRM_MS)
+            ShootHeatSetStatus(HEAT_CONFIRM);
+        break;
+    case HEAT_CONFIRM:
+        // 确认发射: 17mm每发+10热量(42mm机构应改为+100), 之后进入回落等待
+        local_barrel_heat += HEAT_PER_BULLET;
+        ShootHeatSetStatus(HEAT_RELEASE);
+        break;
+    case HEAT_RELEASE:
+        // 回落等待: 等本发弹丸的扭矩电流降到阈值以下再重新武装, 防止同一发被重复计数
+        if (!friction_ready)
+            ShootHeatSetStatus(HEAT_STOP);
+        else if (fire_cur < FRICTION_FIRE_CURRENT_THRESHOLD)
+            ShootHeatSetStatus(HEAT_READY);
+        break;
+    }
+
+    // 善后: 按冷却速率对本地热量做时间衰减(Qnow -= Qcd*dt)
+    float dt = (now - heat_last_calc_time) / 1000.0f; // s
+    heat_last_calc_time = now;
+    if (dt > 0 && dt < 1.0f) // 跳过首次调用/异常的超大dt
+    {
+        float cooling = (float)referee_data->GameRobotState.shooter_barrel_cooling_value;
+        if (cooling <= 0) cooling = BARREL_COOLING_FALLBACK; // 裁判系统离线兜底
+        local_barrel_heat -= cooling * dt;
+    }
+    if (local_barrel_heat < 0) local_barrel_heat = 0;
+
+    // 安全下限: 本地估计不得低于裁判系统已确认的实测热量.
+    // 本地检测延迟低、用于即时上限发射许可; 裁判系统读数延迟但权威, 作为下限防止漏检导致实际超限.
+    float ref_heat = (float)referee_data->PowerHeatData.shooter_17mm_barrel_heat;
+    if (local_barrel_heat < ref_heat)
+        local_barrel_heat = ref_heat;
+
+    dbg_local_heat = local_barrel_heat;
+    dbg_heat_status = (uint8_t)heat_status;
+}
+
 /* 摩擦轮(飞轮)输出: 仿中科大,在停火/单发/连发态常转,根据弹速设定转速 */
 // 2026 ARCC Speed limits: 17mm 25m/s(42000-22~23m/s), 42mm 15m/s
 static void FrictionOutput()
@@ -258,8 +354,11 @@ static void ShootOutput()
     {
         DJIMotorOuterLoop(loader, SPEED_LOOP);
 
-        // 剩余热量 = 热量上限 - 当前17mm枪口热量 (= 中科大tmp_delta)
-        float heat_remain = (float)(referee_data->GameRobotState.shooter_barrel_heat_limit - referee_data->PowerHeatData.shooter_17mm_barrel_heat);
+        // 剩余热量 = 热量上限 - 本地自检估计热量(中科大tmp_delta).
+        // 用ShootHeatFSM即时累加的local_barrel_heat取代裁判系统延迟反馈, 高射频下不再因延迟误超限.
+        float heat_limit = (float)referee_data->GameRobotState.shooter_barrel_heat_limit;
+        if (heat_limit <= 0) heat_limit = HEAT_LIMIT_FALLBACK; // 裁判系统离线兜底
+        float heat_remain = heat_limit - local_barrel_heat;
         float now_rate;
 
         if (heat_remain >= HEAT_SLOWDOWN_THRESHOLD)
@@ -304,6 +403,9 @@ void ShootTask()
 {
     // 从cmd获取控制数据
     SubGetMessage(shoot_sub, &shoot_cmd_recv);
+
+    // 发射自检热量计算: 始终运行(含冷却衰减), 即使调参/失能也需持续累计冷却
+    ShootHeatFSM();
 
     // === 拨盘电流环/速度环阶跃调参 ===
     // Ozone把 loader_tuning 设为1进入，0恢复正常
